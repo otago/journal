@@ -2,11 +2,11 @@
 
 namespace OP\Journals\Models;
 
-use OP\Journals\ArticleType;
 use OP\Journals\Traits\JournalTrait;
 use SilverStripe\Assets\File;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
+use Symbiote\GridFieldExtensions\GridFieldOrderableRows;
 
 class Article extends DataObject
 {
@@ -21,18 +21,19 @@ class Article extends DataObject
         'Content' => 'HTMLText',
     ];
 
+    private static $many_many = [
+        'Types' => ArticleType::class
+    ];
+
     private static $belongs_many_many = [
-        'Types' => ArticleType::class,
-        'Authors' => Author::class
+        'Authors' => Author::class,
+        'Issues' => Issue::class
     ];
 
     private static $many_many_extraFields = [
         'Authors' => [
             'Sort' => 'Int'
-        ],
-        'Types' => [
-            'Sort' => 'Int'
-        ],
+        ]
     ];
 
     private static $has_one = [
@@ -50,6 +51,19 @@ class Article extends DataObject
     private static $summary_fields = [
         'ID' => 'ID',
         'Title' => 'Title',
-        'Links' => 'Links',
+        'URLSegment' => 'URL Segment',
+        'DOI' => 'DOI'
     ];
+
+    public function getCMSFields()
+    {
+        $fields = parent::getCMSFields();
+
+        $grid_field = $fields->fieldByName("Root.Authors.Authors");
+        if ($grid_field) {
+            $grid_field->getConfig()->addComponent(new GridFieldOrderableRows());
+        }
+
+        return $fields;
+    }
 }

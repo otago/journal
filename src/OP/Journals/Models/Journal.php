@@ -4,6 +4,7 @@ namespace OP\Journals\Models;
 
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
+use Symbiote\GridFieldExtensions\GridFieldOrderableRows;
 
 class Journal extends DataObject
 {
@@ -33,6 +34,19 @@ class Journal extends DataObject
 
     private static $summary_fields = [
         'ID' => 'ID',
-        'Title' => 'Title'
+        'Title' => 'Title',
+        'Volumes.Count' => 'Volumes'
     ];
+
+    public function getCMSFields()
+    {
+        $fields = parent::getCMSFields();
+
+        $grid_field = $fields->fieldByName("Root.Volumes.Volumes");
+        if ($grid_field) {
+            $grid_field->getConfig()->addComponent(new GridFieldOrderableRows());
+        }
+
+        return $fields;
+    }
 }

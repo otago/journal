@@ -20,13 +20,8 @@ class Volume extends DataObject
     ];
 
     private static $many_many = [
-        'Issues' => Issue::class
-    ];
-
-    private static $many_many_extraFields = [
-        'Issues' => [
-            'Sort' => 'Int'
-        ]
+        'Issues' => Issue::class,
+        'Journals' => Journal::class
     ];
 
     private static $has_one = [
@@ -45,6 +40,8 @@ class Volume extends DataObject
 
     private static $summary_fields = [
         'ID' => 'ID',
-        'Title' => 'Title'
+        'Title' => 'Title',
+        'URLSegment' => 'URL Segment',
+        'Issues.Count' => 'Issues'
     ];
 }

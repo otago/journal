@@ -38,7 +38,9 @@ class Author extends DataObject
     private static $summary_fields = [
         'ID' => 'ID',
         'FirstName' => 'First Name',
-        'Surname' => 'Surname Date'
+        'Surname' => 'Surname',
+        'Issues.Count' => 'Issues',
+        'Articles.Count' => 'Articles'
     ];
 
     private static $default_sort = "Surname ASC";

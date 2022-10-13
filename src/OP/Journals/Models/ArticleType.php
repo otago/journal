@@ -24,6 +24,7 @@ class ArticleType extends DataObject
     ];
 
     private static $summary_fields = [
+        'ID' => 'ID',
         'Title' => 'Title',
         'Articles.COUNT' => 'Articles'
     ];
