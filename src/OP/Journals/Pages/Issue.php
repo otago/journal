@@ -2,9 +2,11 @@
 
 namespace OP\Journals\Pages;
 
+use OP\Journals\Models\Author;
 use Page;
 use SilverStripe\Assets\File;
 use SilverStripe\Assets\Image;
+use SilverStripe\ORM\DataObject;
 use Symbiote\GridFieldExtensions\GridFieldOrderableRows;
 
 class Issue extends Page
@@ -24,12 +26,6 @@ class Issue extends Page
         'Content' => 'HTMLText'
     ];
 
-    private static $many_many_extraFields = [
-        'Authors' => [
-            'Sort' => 'Int'
-        ]
-    ];
-
     private static $has_one = [
         'File' => File::class,
         'Cover' => Image::class,
@@ -38,6 +34,16 @@ class Issue extends Page
 
     private static $has_many = [
         'Articles' => Article::class
+    ];
+
+    private static $many_many = [
+        'Authors' => Author::class
+    ];
+
+    private static $many_many_extraFields = [
+        'Authors' => [
+            'Sort' => 'Int'
+        ]
     ];
 
     private static $owns = [
@@ -67,14 +73,37 @@ class Issue extends Page
     {
         $fields = parent::getCMSFields();
 
-        $grid_field = $fields->fieldByName("Root.Authors.Authors");
-        if ($grid_field) {
-            $grid_field->getConfig()->addComponent(new GridFieldOrderableRows());
+        $dataobject_fields = DataObject::getCMSFields();
+
+        $fields->addFieldsToTab(
+            "Root.Main",
+            [
+                $dataobject_fields->fieldByName("Root.Main.Subtitle"),
+            ],
+            "URLSegment"
+        );
+
+        $fields->addFieldsToTab(
+            "Root.Main",
+            [
+                $dataobject_fields->fieldByName("Root.Main.DOI"),
+                $dataobject_fields->fieldByName("Root.Main.Number"),
+                $dataobject_fields->fieldByName("Root.Main.Year"),
+                $dataobject_fields->fieldByName("Root.Main.File"),
+                $dataobject_fields->fieldByName("Root.Main.Cover"),
+            ],
+            "Content"
+        );
+
+        $articles = $dataobject_fields->fieldByName("Root.Articles.Articles");
+        if ($articles) {
+            $fields->addFieldToTab("Root.Articles", $articles);
         }
 
-        $grid_field = $fields->fieldByName("Root.Articles.Articles");
-        if ($grid_field) {
-            $grid_field->getConfig()->addComponent(new GridFieldOrderableRows());
+        $authors = $dataobject_fields->fieldByName("Root.Authors.Authors");
+        if ($authors) {
+            $authors->getConfig()->addComponent(new GridFieldOrderableRows());
+            $fields->addFieldToTab("Root.Authors", $authors);
         }
 
         return $fields;

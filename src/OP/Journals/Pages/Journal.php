@@ -3,6 +3,7 @@
 namespace OP\Journals\Pages;
 
 use Page;
+use SilverStripe\ORM\DataObject;
 
 class Journal extends Page
 {
@@ -28,4 +29,17 @@ class Journal extends Page
     private static $allowed_children = [
         Volume::class
     ];
+
+    public function getCMSFields()
+    {
+        $fields = parent::getCMSFields();
+
+        $dataobject_fields = DataObject::getCMSFields();
+        $volumes = $dataobject_fields->fieldByName("Root.Volumes.Volumes");
+        if ($volumes) {
+            $fields->addFieldToTab("Root.Volumes", $volumes);
+        }
+
+        return $fields;
+    }
 }

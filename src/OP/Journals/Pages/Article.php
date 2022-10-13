@@ -6,6 +6,7 @@ use OP\Journals\Models\ArticleType;
 use OP\Journals\Models\Author;
 use Page;
 use SilverStripe\Assets\File;
+use SilverStripe\ORM\DataObject;
 use Symbiote\GridFieldExtensions\GridFieldOrderableRows;
 
 class Article extends Page
@@ -58,9 +59,21 @@ class Article extends Page
     {
         $fields = parent::getCMSFields();
 
-        $grid_field = $fields->fieldByName("Root.Authors.Authors");
-        if ($grid_field) {
-            $grid_field->getConfig()->addComponent(new GridFieldOrderableRows());
+        $dataobject_fields = DataObject::getCMSFields();
+
+        $fields->addFieldsToTab(
+            "Root.Main",
+            [
+                $dataobject_fields->fieldByName("Root.Main.DOI"),
+                $dataobject_fields->fieldByName("Root.Main.File"),
+            ],
+            "Content"
+        );
+
+        $authors = $dataobject_fields->fieldByName("Root.Authors.Authors");
+        if ($authors) {
+            $authors->getConfig()->addComponent(new GridFieldOrderableRows());
+            $fields->addFieldToTab("Root.Authors", $authors);
         }
 
         return $fields;

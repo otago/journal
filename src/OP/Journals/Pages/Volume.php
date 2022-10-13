@@ -4,6 +4,7 @@ namespace OP\Journals\Pages;
 
 use Page;
 use SilverStripe\Assets\Image;
+use SilverStripe\ORM\DataObject;
 
 class Volume extends Page
 {
@@ -42,4 +43,27 @@ class Volume extends Page
     ];
 
     private static $can_be_root = false;
+
+    public function getCMSFields()
+    {
+        $fields = parent::getCMSFields();
+
+        $dataobject_fields = DataObject::getCMSFields();
+
+        $fields->addFieldsToTab(
+            "Root.Main",
+            [
+                $dataobject_fields->fieldByName("Root.Main.Image"),
+                $dataobject_fields->fieldByName("Root.Main.Cover")
+            ],
+            "Content"
+        );
+
+        $issues = $dataobject_fields->fieldByName("Root.Issues.Issues");
+        if ($issues) {
+            $fields->addFieldToTab("Root.Issues", $issues);
+        }
+
+        return $fields;
+    }
 }
