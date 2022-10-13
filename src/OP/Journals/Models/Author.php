@@ -2,14 +2,13 @@
 
 namespace OP\Journals\Models;
 
-use OP\Journals\Traits\JournalTrait;
+use OP\Journals\Pages\Article;
+use OP\Journals\Pages\Issue;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
 
 class Author extends DataObject
 {
-    use JournalTrait;
-
     private static $table_name = 'OP_Journals_Author';
 
     private static $db = [
@@ -19,7 +18,8 @@ class Author extends DataObject
 
     private static $many_many = [
         'Issues' => Issue::class,
-        'Articles' => Article::class
+        'Articles' => Article::class,
+        'Parent' => Issue::class
     ];
 
     private static $many_many_extraFields = [

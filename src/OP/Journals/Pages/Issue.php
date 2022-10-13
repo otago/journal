@@ -1,19 +1,18 @@
 <?php
 
-namespace OP\Journals\Models;
+namespace OP\Journals\Pages;
 
-use OP\Journals\Traits\JournalTrait;
+use Page;
 use SilverStripe\Assets\File;
 use SilverStripe\Assets\Image;
-use SilverStripe\ORM\DataObject;
-use SilverStripe\Versioned\Versioned;
 use Symbiote\GridFieldExtensions\GridFieldOrderableRows;
 
-class Issue extends DataObject
+class Issue extends Page
 {
-    use JournalTrait;
-
     private static $table_name = 'OP_Journals_Issue';
+
+    private static $singular_name = 'Issue';
+    private static $plural_name = 'Issues';
 
     private static $db = [
         'Title' => 'Varchar(255)',
@@ -25,19 +24,7 @@ class Issue extends DataObject
         'Content' => 'HTMLText'
     ];
 
-    private static $many_many = [
-        'Articles' => Article::class,
-    ];
-
-    private static $belongs_many_many = [
-        'Authors' => Author::class,
-        'Volumes' => Volume::class
-    ];
-
     private static $many_many_extraFields = [
-        'Articles' => [
-            'Sort' => 'Int'
-        ],
         'Authors' => [
             'Sort' => 'Int'
         ]
@@ -46,15 +33,16 @@ class Issue extends DataObject
     private static $has_one = [
         'File' => File::class,
         'Cover' => Image::class,
+        'Parent' => Volume::class
+    ];
+
+    private static $has_many = [
+        'Articles' => Article::class
     ];
 
     private static $owns = [
         'File',
         'Cover'
-    ];
-
-    private static $extensions = [
-        Versioned::class,
     ];
 
     private static $summary_fields = [
@@ -67,7 +55,13 @@ class Issue extends DataObject
         'Articles.Count' => 'Articles'
     ];
 
+    private static $allowed_children = [
+        Article::class
+    ];
+
     private static $default_sort = 'Number ASC';
+
+    private static $can_be_root = false;
 
     public function getCMSFields()
     {

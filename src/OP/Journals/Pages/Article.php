@@ -1,18 +1,19 @@
 <?php
 
-namespace OP\Journals\Models;
+namespace OP\Journals\Pages;
 
-use OP\Journals\Traits\JournalTrait;
+use OP\Journals\Models\ArticleType;
+use OP\Journals\Models\Author;
+use Page;
 use SilverStripe\Assets\File;
-use SilverStripe\ORM\DataObject;
-use SilverStripe\Versioned\Versioned;
 use Symbiote\GridFieldExtensions\GridFieldOrderableRows;
 
-class Article extends DataObject
+class Article extends Page
 {
-    use JournalTrait;
-
     private static $table_name = 'OP_Journals_Article';
+
+    private static $singular_name = 'Article';
+    private static $plural_name = 'Articles';
 
     private static $db = [
         'Title' => 'Varchar(255)',
@@ -21,13 +22,17 @@ class Article extends DataObject
         'Content' => 'HTMLText',
     ];
 
+    private static $has_one = [
+        'File' => File::class,
+        'Issue' => Issue::class
+    ];
+
     private static $many_many = [
         'Types' => ArticleType::class
     ];
 
     private static $belongs_many_many = [
-        'Authors' => Author::class,
-        'Issues' => Issue::class
+        'Authors' => Author::class
     ];
 
     private static $many_many_extraFields = [
@@ -36,16 +41,8 @@ class Article extends DataObject
         ]
     ];
 
-    private static $has_one = [
-        'File' => File::class
-    ];
-
     private static $owns = [
         'File'
-    ];
-
-    private static $extensions = [
-        Versioned::class,
     ];
 
     private static $summary_fields = [
@@ -54,6 +51,8 @@ class Article extends DataObject
         'URLSegment' => 'URL Segment',
         'DOI' => 'DOI'
     ];
+
+    private static $can_be_root = false;
 
     public function getCMSFields()
     {

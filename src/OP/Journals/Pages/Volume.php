@@ -1,16 +1,12 @@
 <?php
 
-namespace OP\Journals\Models;
+namespace OP\Journals\Pages;
 
-use OP\Journals\Traits\JournalTrait;
+use Page;
 use SilverStripe\Assets\Image;
-use SilverStripe\ORM\DataObject;
-use SilverStripe\Versioned\Versioned;
 
-class Volume extends DataObject
+class Volume extends Page
 {
-    use JournalTrait;
-
     private static $table_name = 'OP_Journals_Volume';
 
     private static $db = [
@@ -19,23 +15,19 @@ class Volume extends DataObject
         'Content' => 'HTMLText'
     ];
 
-    private static $many_many = [
-        'Issues' => Issue::class,
-        'Journals' => Journal::class
-    ];
-
     private static $has_one = [
         'Cover' => Image::class,
         'Image' => Image::class,
+        'Parent' => Journal::class
+    ];
+
+    private static $has_many = [
+        'Issues' => Issue::class
     ];
 
     private static $owns = [
         'Cover',
         'Image'
-    ];
-
-    private static $extensions = [
-        Versioned::class,
     ];
 
     private static $summary_fields = [
@@ -44,4 +36,10 @@ class Volume extends DataObject
         'URLSegment' => 'URL Segment',
         'Issues.Count' => 'Issues'
     ];
+
+    private static $allowed_children = [
+        Issue::class
+    ];
+
+    private static $can_be_root = false;
 }

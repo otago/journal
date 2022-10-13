@@ -2,6 +2,7 @@
 
 namespace OP\Journals\Models;
 
+use OP\Journals\Pages\Article;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
 

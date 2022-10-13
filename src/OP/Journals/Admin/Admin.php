@@ -2,12 +2,12 @@
 
 namespace OP\Journals\Admin;
 
-use OP\Journals\Models\Article;
+use OP\Journals\Pages\Article;
 use OP\Journals\Models\ArticleType;
 use OP\Journals\Models\Author;
-use OP\Journals\Models\Issue;
-use OP\Journals\Models\Journal;
-use OP\Journals\Models\Volume;
+use OP\Journals\Pages\Issue;
+use OP\Journals\Pages\Journal;
+use OP\Journals\Pages\Volume;
 use SilverStripe\Admin\ModelAdmin;
 
 class Admin extends ModelAdmin
