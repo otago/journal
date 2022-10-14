@@ -97,6 +97,7 @@ class Issue extends Page
 
         $articles = $dataobject_fields->fieldByName("Root.Articles.Articles");
         if ($articles) {
+            $articles->getConfig()->addComponent(new GridFieldOrderableRows());
             $fields->addFieldToTab("Root.Articles", $articles);
         }
 

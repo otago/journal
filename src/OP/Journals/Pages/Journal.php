@@ -4,6 +4,7 @@ namespace OP\Journals\Pages;
 
 use Page;
 use SilverStripe\ORM\DataObject;
+use Symbiote\GridFieldExtensions\GridFieldOrderableRows;
 
 class Journal extends Page
 {
@@ -37,6 +38,7 @@ class Journal extends Page
         $dataobject_fields = DataObject::getCMSFields();
         $volumes = $dataobject_fields->fieldByName("Root.Volumes.Volumes");
         if ($volumes) {
+            $volumes->getConfig()->addComponent(new GridFieldOrderableRows());
             $fields->addFieldToTab("Root.Volumes", $volumes);
         }
 
