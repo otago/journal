@@ -2,16 +2,16 @@
 
 namespace OP\Journals\Pages;
 
-use OP\Journals\Models\Author;
 use Page;
 use SilverStripe\Assets\File;
 use SilverStripe\Assets\Image;
+use SilverStripe\Forms\DropdownField;
 use SilverStripe\ORM\DataObject;
 use Symbiote\GridFieldExtensions\GridFieldOrderableRows;
 
 class Issue extends Page
 {
-    private static $table_name = 'OP_Journals_Issue';
+    private static $table_name = 'OP_Journals_Pages_Issue';
 
     private static $singular_name = 'Issue';
     private static $plural_name = 'Issues';
@@ -42,7 +42,7 @@ class Issue extends Page
 
     private static $many_many_extraFields = [
         'Authors' => [
-            'Sort' => 'Int'
+            'IssueSort' => 'Int'
         ]
     ];
 
@@ -86,6 +86,7 @@ class Issue extends Page
         $fields->addFieldsToTab(
             "Root.Main",
             [
+                DropdownField::create('ParentID', 'Parent', Volume::get()->map()),
                 $dataobject_fields->fieldByName("Root.Main.DOI"),
                 $dataobject_fields->fieldByName("Root.Main.Number"),
                 $dataobject_fields->fieldByName("Root.Main.Year"),
@@ -103,7 +104,7 @@ class Issue extends Page
 
         $authors = $dataobject_fields->fieldByName("Root.Authors.Authors");
         if ($authors) {
-            $authors->getConfig()->addComponent(new GridFieldOrderableRows());
+            $authors->getConfig()->addComponent(new GridFieldOrderableRows('IssueSort'));
             $fields->addFieldToTab("Root.Authors", $authors);
         }
 

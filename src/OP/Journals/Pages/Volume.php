@@ -4,11 +4,12 @@ namespace OP\Journals\Pages;
 
 use Page;
 use SilverStripe\Assets\Image;
+use SilverStripe\Forms\DropdownField;
 use SilverStripe\ORM\DataObject;
 
 class Volume extends Page
 {
-    private static $table_name = 'OP_Journals_Volume';
+    private static $table_name = 'OP_Journals_Pages_Volume';
 
     private static $db = [
         'Title' => 'Varchar(255)',
@@ -53,6 +54,7 @@ class Volume extends Page
         $fields->addFieldsToTab(
             "Root.Main",
             [
+                DropdownField::create('ParentID', 'Parent', Journal::get()->map()),
                 $dataobject_fields->fieldByName("Root.Main.Image"),
                 $dataobject_fields->fieldByName("Root.Main.Cover")
             ],

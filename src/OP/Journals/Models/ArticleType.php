@@ -5,10 +5,11 @@ namespace OP\Journals\Models;
 use OP\Journals\Pages\Article;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
+use Symbiote\GridFieldExtensions\GridFieldOrderableRows;
 
 class ArticleType extends DataObject
 {
-    private static $table_name = 'OP_Journals_ArticleType';
+    private static $table_name = 'OP_Journals_Models_ArticleType';
 
     private static $db = [
         'Title' => 'Varchar(255)',
@@ -20,7 +21,7 @@ class ArticleType extends DataObject
 
     private static $many_many_extraFields = [
         'Articles' => [
-            'Sort' => 'Int'
+            'ArticleTypeSort' => 'Int'
         ],
     ];
 
@@ -35,4 +36,18 @@ class ArticleType extends DataObject
     ];
 
     private static $default_sort = "Title ASC";
+
+    public function getCMSFields()
+    {
+        $fields = parent::getCMSFields();
+
+        $dataobject_fields = DataObject::getCMSFields();
+        $volumes = $dataobject_fields->fieldByName("Root.Articles.Articles");
+        if ($volumes) {
+            $volumes->getConfig()->addComponent(new GridFieldOrderableRows('ArticleTypeSort'));
+            $fields->addFieldToTab("Root.Articles", $volumes);
+        }
+
+        return $fields;
+    }
 }

@@ -8,7 +8,7 @@ use Symbiote\GridFieldExtensions\GridFieldOrderableRows;
 
 class Journal extends Page
 {
-    private static $table_name = 'OP_Journals_Journal';
+    private static $table_name = 'OP_Journals_Pages_Journal';
 
     private static $singular_name = 'Journal';
     private static $plural_name = 'Journals';
@@ -18,7 +18,8 @@ class Journal extends Page
     ];
 
     private static $has_many = [
-        'Volumes' => Volume::class
+        'Volumes' => Volume::class,
+        'Authors' => Authors::class
     ];
 
     private static $summary_fields = [
@@ -28,7 +29,8 @@ class Journal extends Page
     ];
 
     private static $allowed_children = [
-        Volume::class
+        Volume::class,
+        Authors::class
     ];
 
     public function getCMSFields()

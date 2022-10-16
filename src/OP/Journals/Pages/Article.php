@@ -3,15 +3,15 @@
 namespace OP\Journals\Pages;
 
 use OP\Journals\Models\ArticleType;
-use OP\Journals\Models\Author;
 use Page;
 use SilverStripe\Assets\File;
+use SilverStripe\Forms\DropdownField;
 use SilverStripe\ORM\DataObject;
 use Symbiote\GridFieldExtensions\GridFieldOrderableRows;
 
 class Article extends Page
 {
-    private static $table_name = 'OP_Journals_Article';
+    private static $table_name = 'OP_Journals_Pages_Article';
 
     private static $singular_name = 'Article';
     private static $plural_name = 'Articles';
@@ -25,20 +25,17 @@ class Article extends Page
 
     private static $has_one = [
         'File' => File::class,
-        'Issue' => Issue::class
+        'Parent' => Issue::class
     ];
 
     private static $many_many = [
-        'Types' => ArticleType::class
-    ];
-
-    private static $belongs_many_many = [
+        'Types' => ArticleType::class,
         'Authors' => Author::class
     ];
 
     private static $many_many_extraFields = [
         'Authors' => [
-            'Sort' => 'Int'
+            'ArticleSort' => 'Int'
         ]
     ];
 
@@ -53,6 +50,8 @@ class Article extends Page
         'DOI' => 'DOI'
     ];
 
+    private static $allowed_children = [];
+
     private static $can_be_root = false;
 
     public function getCMSFields()
@@ -64,6 +63,7 @@ class Article extends Page
         $fields->addFieldsToTab(
             "Root.Main",
             [
+                DropdownField::create('ParentID', 'Parent', Issue::get()->map()),
                 $dataobject_fields->fieldByName("Root.Main.DOI"),
                 $dataobject_fields->fieldByName("Root.Main.File"),
             ],
@@ -72,7 +72,7 @@ class Article extends Page
 
         $authors = $dataobject_fields->fieldByName("Root.Authors.Authors");
         if ($authors) {
-            $authors->getConfig()->addComponent(new GridFieldOrderableRows());
+            $authors->getConfig()->addComponent(new GridFieldOrderableRows('ArticleSort'));
             $fields->addFieldToTab("Root.Authors", $authors);
         }
 

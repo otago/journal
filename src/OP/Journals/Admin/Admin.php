@@ -4,7 +4,7 @@ namespace OP\Journals\Admin;
 
 use OP\Journals\Pages\Article;
 use OP\Journals\Models\ArticleType;
-use OP\Journals\Models\Author;
+use OP\Journals\Pages\Author;
 use OP\Journals\Pages\Issue;
 use OP\Journals\Pages\Journal;
 use OP\Journals\Pages\Volume;
@@ -22,7 +22,7 @@ class Admin extends ModelAdmin
         Volume::class,
         Issue::class,
         Article::class,
+        Author::class,
         ArticleType::class,
-        Author::class
     ];
 }
