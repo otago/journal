@@ -1,0 +1,45 @@
+SilverStripe\Control\Director:
+  rules:
+    "journal-graphql": '%$SilverStripe\GraphQL\Controller.journal'
+
+SilverStripe\Core\Injector\Injector:
+  SilverStripe\GraphQL\Controller.journal:
+    class: SilverStripe\GraphQL\Controller
+    constructor:
+      schema: journal
+
+SilverStripe\GraphQL\Schema\Schema:
+  schemas:
+    journal:
+      models:
+        OP\Journals\Pages\Journal:
+          fields: "*"
+          operations:
+            read: true
+        OP\Journals\Pages\Volume:
+          fields: "*"
+          operations:
+            read: true
+        OP\Journals\Pages\Issue:
+          fields: "*"
+          operations:
+            read: true
+        OP\Journals\Pages\Article:
+          fields: "*"
+          operations:
+            read: true
+        OP\Journals\Pages\Author:
+          fields: "*"
+          operations:
+            read: true
+        OP\Journals\Models\ArticleType:
+          fields: "*"
+          operations:
+            read: true
+        SilverStripe\Assets\File:
+          fields:
+            id: int
+            name: string
+            absoluteUrl: string
+          operations:
+            read: true
