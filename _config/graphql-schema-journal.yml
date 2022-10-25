@@ -23,7 +23,12 @@ SilverStripe\GraphQL\Schema\Schema:
           operations:
             read: true
         OP\Journals\Pages\Author:
-          fields: "*"
+          fields:
+            id: int
+            firstname: string
+            surname: string
+            title: string
+            absoluteLink: string
           operations:
             read: true
         OP\Journals\Models\ArticleType:
