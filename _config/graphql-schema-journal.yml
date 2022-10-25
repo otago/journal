@@ -25,7 +25,7 @@ SilverStripe\GraphQL\Schema\Schema:
         OP\Journals\Pages\Author:
           fields:
             id: int
-            firstname: string
+            firstName: string
             surname: string
             title: string
             absoluteLink: string
