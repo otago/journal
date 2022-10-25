@@ -1,16 +1,10 @@
 SilverStripe\Control\Director:
   rules:
-    "journal-graphql": '%$SilverStripe\GraphQL\Controller.journal'
-
-SilverStripe\Core\Injector\Injector:
-  SilverStripe\GraphQL\Controller.journal:
-    class: SilverStripe\GraphQL\Controller
-    constructor:
-      schema: journal
+    "graphql": '%$SilverStripe\GraphQL\Controller.default'
 
 SilverStripe\GraphQL\Schema\Schema:
   schemas:
-    journal:
+    default:
       models:
         OP\Journals\Pages\Journal:
           fields: "*"
