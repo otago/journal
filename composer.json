@@ -1,6 +1,6 @@
 {
-    "name": "silverstripe-module/skeleton",
-    "description": "A skeleton for Silverstripe CMS modules.",
+    "name": "otago/journal",
+    "description": "Journal infrastructure.",
     "type": "silverstripe-vendormodule",
     "keywords": [
         "silverstripe",
