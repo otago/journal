@@ -184,7 +184,7 @@ class MigrateDataTask extends BuildTask
     public function copyPages()
     {
         self::Connect(self::$op);
-        $records = SiteTree::get()->filter("SubsiteID", $this->subsite_id)->toArray();
+        $records = SiteTree::get()->filter("SubsiteID", self::$subsite_id)->toArray();
 
         self::Connect(self::$this_website);
         foreach ($records as $record) {
@@ -210,7 +210,8 @@ class MigrateDataTask extends BuildTask
     public function copySiteConfig()
     {
         self::Connect(self::$op);
-        $result = DB::query("SELECT * FROM SiteConfig WHERE SubsiteID = $this->subsite_id");
+        $subsite_id = self::$subsite_id;
+        $result = DB::query("SELECT * FROM SiteConfig WHERE SubsiteID = $subsite_id");
 
         self::Connect(self::$this_website);
         $siteconfig = SiteConfig::create();
