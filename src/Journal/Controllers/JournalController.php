@@ -72,14 +72,10 @@ class JournalController extends PageController
                 'Title:PartialMatch' => $this->Query,
                 'Subtitle:PartialMatch' => $this->Query,
                 'Content:PartialMatch' => $this->Query
-            ])->filter([
-                'Parent.ParentID' => $this->JournalID
             ]);
             $this->SearchResults->Articles = Article::get()->filterAny([
                 'Title:PartialMatch' => $this->Query,
                 'Content:PartialMatch' => $this->Query
-            ])->filter([
-                'Parent.Parent.ParentID' => $this->JournalID
             ]);
             $this->GotResults = $this->SearchResults->Authors->First() || $this->SearchResults->Volumes->First() || $this->SearchResults->Issues->First() || $this->SearchResults->Articles->First();
         } else {
