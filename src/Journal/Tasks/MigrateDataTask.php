@@ -109,7 +109,7 @@ class MigrateDataTask extends BuildTask
             "Journals_Volume",
             true,
             "JournalID",
-            $this->journal_id,
+            self::$journal_id,
             DataObject::get_one(Journal::class)->ID,
             false,
             'copyIssues',
