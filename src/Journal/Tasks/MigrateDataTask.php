@@ -246,6 +246,8 @@ class MigrateDataTask extends BuildTask
         ] as $relationship) {
             self::Delete("Journal_Models_Author_$relationship");
         }
+
+        self::Delete("SiteConfig");
     }
 
     public static function CreateItem(
