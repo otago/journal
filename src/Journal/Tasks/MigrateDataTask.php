@@ -201,13 +201,14 @@ class MigrateDataTask extends BuildTask
             );
         }
 
-        // Scopes
         $home = DataObject::get_one(RedirectorPage::class);
-        if ($home?->ID && $home->Title == "Home") {
-            $home->LinkToID = DataObject::get_one(Journal::class)->ID;
-            $home->write();
-            $home->publishSingle();
+        if (!$home?->ID) {
+            $home = RedirectorPage::create();
+            $home->Title = "Home";
         }
+        $home->LinkToID = DataObject::get_one(Journal::class)->ID;
+        $home->write();
+        $home->publishSingle();
     }
 
     public function copySiteConfig()
