@@ -268,6 +268,18 @@ class MigrateDataTask extends BuildTask
         }
         self::Log("Creating $class #$item->ID...");
 
+        if (!$item->ElementalAreaID && $class = Page::class) {
+            self::Connect(self::$op);
+            $items = self::Records(
+                "Page",
+                "WHERE ID = " . $data['ID']
+            );
+            if (count($items)) {
+                $item->ElementalAreaID = $items[0]["ElementalAreaID"];
+            }
+            self::Connect(self::$this_website);
+        }
+
         if ($item->ElementalAreaID) {
             self::CopyElements($data, $item);
         }
