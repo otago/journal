@@ -187,6 +187,8 @@ class MigrateDataTask extends BuildTask
         $records = SiteTree::get()->filter("SubsiteID", self::$subsite_id)->toArray();
 
         self::Connect(self::$this_website);
+        $items = [];
+
         foreach ($records as $record) {
             $className = $record->ClassName;
             if ($record->Title == "Journal") {
@@ -194,11 +196,20 @@ class MigrateDataTask extends BuildTask
             }
             self::Log("Title: $record->Title...");
             self::Log("className: $className...");
-            self::CreateItem(
+            $items[$record->ID] = self::CreateItem(
                 $record->toMap(),
                 $className,
                 true,
             );
+        }
+
+        // Fix parent IDs
+        foreach ($records as $record) {
+            if ($record->ParentID) {
+                $items[$record->ID]->ParentID = $items[$items[$record->ID]->ParentID]->ID;
+                $items[$record->ID]->write();
+                $items[$record->ID]->publishSingle();
+            }
         }
 
         // Scopes
