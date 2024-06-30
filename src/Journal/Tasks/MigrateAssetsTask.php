@@ -82,6 +82,10 @@ class MigrateAssetsTask extends BuildTask
 
     public static function SyncAsset($assetID, $className = File::class)
     {
+        if (!$assetID || $assetID == "0") {
+            return;
+        }
+
         MigrateDataTask::Connect(self::$op);
         $record = DataObject::get_by_id($className, $assetID);
         $sourceUrl = $record?->File?->getSourceURL();
