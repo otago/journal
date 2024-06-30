@@ -23,12 +23,16 @@ class MigrateAssetsTask extends BuildTask
         self::$this_website = Environment::getEnv("SS_DATABASE_NAME");
         self::$op_public_directory = Environment::getEnv("SS_OP_PUBLIC_DIRECTORY");
 
+        $this->extend("onBeforeRun");
+
         self::DeleteAllFiles();
         self::CreateUploadsFolder();
 
         self::Volumes();
         self::Issues();
         self::Articles();
+
+        $this->extend("onAfterRun");
     }
 
     public static function Articles()
