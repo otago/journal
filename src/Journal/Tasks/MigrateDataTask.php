@@ -38,6 +38,8 @@ class MigrateDataTask extends BuildTask
         $this->copySiteConfig();
         $this->copyPages();
         $this->copyVolumes();
+
+        $this->extend("onAfterRun");
     }
 
     public function findOrCreateAuthor($authorID)
