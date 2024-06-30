@@ -17,6 +17,16 @@ class MigrateAssetsTask extends BuildTask
 {
     private static $op, $this_website, $op_public_directory;
 
+    public static function OP()
+    {
+        return self::$op;
+    }
+
+    public static function ThisWebsite()
+    {
+        return self::$this_website;
+    }
+
     public function run($request)
     {
         self::$op = Environment::getEnv("SS_OP_DATABASE_NAME");
