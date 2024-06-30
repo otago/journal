@@ -25,6 +25,8 @@ class MigrateDataTask extends BuildTask
 
     public function run($request)
     {
+        $this->extend("onBeforeRun");
+
         self::$op = Environment::getEnv("SS_OP_DATABASE_NAME");
         self::$subsite_id = Environment::getEnv("SS_OP_SUBSITE_ID");
         self::$this_website = Environment::getEnv("SS_DATABASE_NAME");
