@@ -21,7 +21,22 @@ use Journal\Pages\Volume;
 
 class MigrateDataTask extends BuildTask
 {
-    public static $id = 1, $op, $this_website, $subsite_id, $journal_id;
+    private static $id = 1, $op, $this_website, $subsite_id, $journal_id;
+
+    public static function OP()
+    {
+        return self::$op;
+    }
+
+    public static function ThisWebsite()
+    {
+        return self::$this_website;
+    }
+
+    public static function SubsiteID()
+    {
+        return self::SubsiteID();
+    }
 
     public function run($request)
     {
