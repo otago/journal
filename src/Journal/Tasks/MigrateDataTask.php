@@ -35,7 +35,7 @@ class MigrateDataTask extends BuildTask
 
     public static function SubsiteID()
     {
-        return self::SubsiteID();
+        return self::$subsite_id;
     }
 
     public function run($request)
