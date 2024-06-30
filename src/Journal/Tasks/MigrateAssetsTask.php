@@ -28,6 +28,8 @@ class MigrateAssetsTask extends BuildTask
         self::DeleteAllFiles();
         self::CreateUploadsFolder();
 
+        $this->extend("onBeforeCopy");
+
         self::Volumes();
         self::Issues();
         self::Articles();
