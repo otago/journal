@@ -298,7 +298,7 @@ class MigrateDataTask extends BuildTask
         }
         self::Log("Creating $class #$item->ID...");
 
-        if (!$item->ElementalAreaID && $class = Page::class) {
+        if (!$item->ElementalAreaID && $class == Page::class) {
             self::Connect(self::$op);
             $items = self::Records(
                 "Page",
