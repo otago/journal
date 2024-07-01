@@ -50,7 +50,7 @@ class MigrateDataTask extends BuildTask
         self::Connect(self::$this_website);
         self::ClearRecords();
 
-        $this->copySiteConfig();
+        $this->CopySiteConfig(self::$op, self::$subsite_id, self::$this_website);
         $this->copyPages();
         $this->copyVolumes();
 
@@ -240,13 +240,12 @@ class MigrateDataTask extends BuildTask
         }
     }
 
-    public function copySiteConfig()
+    public static function CopySiteConfig($op, $subsite_id, $this_website)
     {
-        self::Connect(self::$op);
-        $subsite_id = self::$subsite_id;
+        self::Connect($op);
         $result = DB::query("SELECT * FROM SiteConfig WHERE SubsiteID = $subsite_id");
 
-        self::Connect(self::$this_website);
+        self::Connect($this_website);
         $siteconfig = SiteConfig::create();
         $siteconfig->update($result->record());
         self::Log("Creating SiteConfig #$siteconfig->ID...");
