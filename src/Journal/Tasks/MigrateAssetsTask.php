@@ -92,6 +92,32 @@ class MigrateAssetsTask extends BuildTask
         }
     }
 
+    public static function PrependSegmentToUrl($url, $segment)
+    {
+        // Parse the URL to get its components
+        $urlComponents = parse_url($url);
+
+        // Split the path into directory and filename
+        $path = $urlComponents['path'];
+        $pathParts = pathinfo($path);
+
+        // Construct the new path with the prepended segment
+        if (isset($pathParts['dirname']) && $pathParts['dirname'] !== '.') {
+            $newPath = $pathParts['dirname'] . '/' . $segment . '/' . $pathParts['basename'];
+        } else {
+            $newPath = '/' . $segment . '/' . $pathParts['basename'];
+        }
+
+        // Rebuild the URL with the modified path
+        $newUrl = (isset($urlComponents['scheme']) ? $urlComponents['scheme'] . '://' : '') .
+            (isset($urlComponents['host']) ? $urlComponents['host'] : '') .
+            $newPath .
+            (isset($urlComponents['query']) ? '?' . $urlComponents['query'] : '') .
+            (isset($urlComponents['fragment']) ? '#' . $urlComponents['fragment'] : '');
+
+        return $newUrl;
+    }
+
     public static function SyncAsset($assetID, $className = File::class)
     {
         if (!$assetID || $assetID == "0") {
@@ -100,17 +126,17 @@ class MigrateAssetsTask extends BuildTask
 
         MigrateDataTask::Connect(self::$op);
         $record = DataObject::get_by_id($className, $assetID);
-        $sourceUrl = $record?->File?->getSourceURL();
 
-        if (!$sourceUrl) {
-            MigrateDataTask::Log("Failed to find sourceUrl for file with ID #$assetID.");
+        if (!$assetID || $assetID == "0" || !$record?->File?->Filename) {
             return;
         }
 
+        $sourceUrl = self::PrependSegmentToUrl($record?->File?->Filename, substr($record?->FileHash, 0, 10));
+
         MigrateDataTask::Connect(self::$this_website);
-        $url = $record->File ? Controller::curr()->join_links(self::$op_public_directory, $sourceUrl) : '';
         $record = $record->toMap();
         $folder = Folder::find_or_make('Uploads');
+
         $file = MigrateDataTask::CreateItem(
             $record,
             $record['ClassName'],
@@ -118,33 +144,31 @@ class MigrateAssetsTask extends BuildTask
             $folder->ID,
             false
         );
-        if ($url && file_exists($url)) {
-            MigrateDataTask::Log("Coping #$file->ID from URL $url...");
-            $file->setFromLocalFile($url);
-        } else {
-            $live_url = Controller::curr()->join_links(
-                Environment::getEnv("SS_OP_LIVE_URL"),
+        $live_url = Controller::curr()->join_links(
+            Environment::getEnv("SS_OP_LIVE_URL"),
+            Controller::curr()->join_links(
+                'assets',
                 $sourceUrl
-            );
-            $options = [
-                'http' => [
-                    'method' => 'GET',
-                    'header' => 'User-Agent: PHP'
-                ]
-            ];
-            $context = stream_context_create($options);
+            )
+        );
+        $options = [
+            'http' => [
+                'method' => 'GET',
+                'header' => 'User-Agent: PHP'
+            ]
+        ];
+        $context = stream_context_create($options);
 
-            MigrateDataTask::Log("Coping #$file->ID from URL $live_url...");
-            $content = file_get_contents($live_url, false, $context);
+        MigrateDataTask::Log("Coping #$file->ID from URL $live_url...");
+        $content = file_get_contents($live_url, false, $context);
 
-            if ($content === FALSE) {
-                MigrateDataTask::Log("Failed to open stream.");
-            } else {
-                $file->setFromString($content, "Uploads/$file->Name");
-                $file->ID = $record["ID"];
-                $file->write();
-                $file->publishSingle();
-            }
+        if ($content === FALSE) {
+            MigrateDataTask::Log("Failed to open stream.");
+        } else {
+            $file->setFromString($content, "Uploads/$file->Name");
+            $file->ID = $record["ID"];
+            $file->write();
+            $file->publishSingle();
         }
     }
 
