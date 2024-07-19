@@ -21,7 +21,7 @@ use Journal\Pages\Volume;
 
 class MigrateDataTask extends BuildTask
 {
-    private static $id = 1, $op, $this_website, $subsite_id, $journal_id;
+    private static $id = 1, $op, $this_website, $subsite_id, $journal_id, $connections = [];
 
     public static function OP()
     {
@@ -355,12 +355,16 @@ class MigrateDataTask extends BuildTask
 
     public static function Connect($name)
     {
-        DB::connect([
-            'database' => $name,
-            'type' => Environment::getEnv("SS_DATABASE_CLASS"),
-            'server' => Environment::getEnv("SS_DATABASE_SERVER"),
-            'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
-            'password' => Environment::getEnv("SS_DATABASE_PASSWORD")
-        ]);
+        if (array_key_exists($name, self::$connections)) {
+            DB::set_conn(self::$connections[$name]);
+        } else {
+            self::$connections[$name] = DB::connect([
+                'database' => $name,
+                'type' => Environment::getEnv("SS_DATABASE_CLASS"),
+                'server' => Environment::getEnv("SS_DATABASE_SERVER"),
+                'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+                'password' => Environment::getEnv("SS_DATABASE_PASSWORD")
+            ]);
+        }
     }
 }
