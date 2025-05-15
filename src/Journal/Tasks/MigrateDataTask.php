@@ -21,7 +21,7 @@ use Journal\Pages\Volume;
 
 class MigrateDataTask extends BuildTask
 {
-    private static $id = 1, $op, $this_website, $subsite_id, $journal_id, $connections = [];
+    private static $id = 1, $op, $this_website, $subsite_id, $journal_id;
 
     public static function OP()
     {
@@ -50,7 +50,7 @@ class MigrateDataTask extends BuildTask
         self::Connect(self::$this_website);
         self::ClearRecords();
 
-        $this->CopySiteConfig(self::$op, self::$subsite_id, self::$this_website);
+        $this->copySiteConfig();
         $this->copyPages();
         $this->copyVolumes();
 
@@ -240,12 +240,13 @@ class MigrateDataTask extends BuildTask
         }
     }
 
-    public static function CopySiteConfig($op, $subsite_id, $this_website)
+    public function copySiteConfig()
     {
-        self::Connect($op);
+        self::Connect(self::$op);
+        $subsite_id = self::$subsite_id;
         $result = DB::query("SELECT * FROM SiteConfig WHERE SubsiteID = $subsite_id");
 
-        self::Connect($this_website);
+        self::Connect(self::$this_website);
         $siteconfig = SiteConfig::create();
         $siteconfig->update($result->record());
         self::Log("Creating SiteConfig #$siteconfig->ID...");
@@ -254,25 +255,29 @@ class MigrateDataTask extends BuildTask
 
     public static function ClearRecords()
     {
-        foreach ([
-            'SiteTree',
-            'VirtualPage',
-            'ErrorPage',
-            'RedirectorPage',
-            'Journal_Pages_Volume',
-            'Journal_Pages_Issue',
-            'Journal_Pages_Article',
-            'Journal_Models_Author'
-        ] as $tableName) {
+        foreach (
+            [
+                'SiteTree',
+                'VirtualPage',
+                'ErrorPage',
+                'RedirectorPage',
+                'Journal_Pages_Volume',
+                'Journal_Pages_Issue',
+                'Journal_Pages_Article',
+                'Journal_Models_Author'
+            ] as $tableName
+        ) {
             self::Delete($tableName);
             self::Delete("{$tableName}_Live");
             self::Delete("{$tableName}_Versions");
         }
 
-        foreach ([
-            'Issues',
-            'Articles'
-        ] as $relationship) {
+        foreach (
+            [
+                'Issues',
+                'Articles'
+            ] as $relationship
+        ) {
             self::Delete("Journal_Models_Author_$relationship");
         }
 
@@ -350,21 +355,17 @@ class MigrateDataTask extends BuildTask
         } else {
             echo "$datestamp $str\n";
         }
-        Injector::inst()->get(Logger::class)->info(get_class() . ': ' . $str);
+        Injector::inst()->get(Logger::class)->info(get_called_class() . ': ' . $str);
     }
 
     public static function Connect($name)
     {
-        if (array_key_exists($name, self::$connections)) {
-            DB::set_conn(self::$connections[$name]);
-        } else {
-            self::$connections[$name] = DB::connect([
-                'database' => $name,
-                'type' => Environment::getEnv("SS_DATABASE_CLASS"),
-                'server' => Environment::getEnv("SS_DATABASE_SERVER"),
-                'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
-                'password' => Environment::getEnv("SS_DATABASE_PASSWORD")
-            ]);
-        }
+        DB::connect([
+            'database' => $name,
+            'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+            'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+            'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+            'password' => Environment::getEnv("SS_DATABASE_PASSWORD")
+        ]);
     }
 }
