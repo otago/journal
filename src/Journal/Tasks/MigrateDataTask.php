@@ -21,18 +21,18 @@ use Journal\Pages\Volume;
 
 class MigrateDataTask extends BuildTask
 {
-    private static $id = 1, $op, $this_website, $subsite_id, $journal_id;
+    private static $id = 1;
+    private static $op, $this_website, $subsite_id, $journal_id;
+    private static $cache = [];
 
     public static function OP()
     {
         return self::$op;
     }
-
     public static function ThisWebsite()
     {
         return self::$this_website;
     }
-
     public static function SubsiteID()
     {
         return self::$subsite_id;
@@ -40,15 +40,12 @@ class MigrateDataTask extends BuildTask
 
     public function run($request)
     {
-        self::$op = Environment::getEnv("SS_OP_DATABASE_NAME");
-        self::$subsite_id = Environment::getEnv("SS_OP_SUBSITE_ID");
+        self::$op           = Environment::getEnv("SS_OP_DATABASE_NAME");
+        self::$subsite_id   = Environment::getEnv("SS_OP_SUBSITE_ID");
         self::$this_website = Environment::getEnv("SS_DATABASE_NAME");
-        self::$journal_id = Environment::getEnv("SS_OP_JOURNAL_ID");
+        self::$journal_id   = Environment::getEnv("SS_OP_JOURNAL_ID");
 
         $this->extend("onBeforeRun");
-
-        self::Connect(self::$this_website);
-        self::ClearRecords();
 
         $this->copySiteConfig();
         $this->copyPages();
@@ -59,43 +56,34 @@ class MigrateDataTask extends BuildTask
 
     public function findOrCreateAuthor($authorID)
     {
-        self::Connect(self::$op);
-        $items = self::Records(
-            "Journals_Author",
-            "WHERE ID = $authorID"
-        );
-
-        self::Connect(self::$this_website);
+        $items = self::Records("Journals_Author", "WHERE ID = $authorID", self::$op);
+        DataObject::reset();
         $author = DataObject::get_by_id(Author::class, $authorID);
         if (!$author?->ID && count($items)) {
             $author = self::CreateItem($items[0], Author::class, true, 0, false);
         }
-
         return $author;
     }
 
     public function copyAuthors($page, $ownerID)
     {
-        self::Connect(self::$op);
-
-        $ownerLabel = $page->singular_name();
+        $label = $page->singular_name();
         $items = self::Records(
-            "Journals_Author_{$ownerLabel}s",
-            "WHERE Journals_{$ownerLabel}ID = $ownerID"
+            "Journals_Author_{$label}s",
+            "WHERE Journals_{$label}ID = $ownerID",
+            self::$op
         );
-
-        self::Connect(self::$this_website);
         foreach ($items as $item) {
-            $author = self::findOrCreateAuthor($item["Journals_AuthorID"]);
-            if ($author?->ID) {
-                $page->Authors()->add($author);
+            $a = $this->findOrCreateAuthor($item["Journals_AuthorID"]);
+            if ($a?->ID) {
+                $page->Authors()->add($a);
             }
         }
     }
 
     public function copyArticles($issueID, $parentID)
     {
-        self::copyDataObject(
+        $this->copyDataObject(
             Article::class,
             "Journals_Article",
             true,
@@ -103,13 +91,13 @@ class MigrateDataTask extends BuildTask
             $issueID,
             $parentID,
             true,
-            '',
+            ''
         );
     }
 
     public function copyIssues($volumeID, $parentID)
     {
-        self::copyDataObject(
+        $this->copyDataObject(
             Issue::class,
             "Journals_Issue",
             true,
@@ -117,13 +105,13 @@ class MigrateDataTask extends BuildTask
             $volumeID,
             $parentID,
             true,
-            'copyArticles',
+            'copyArticles'
         );
     }
 
     public function copyVolumes()
     {
-        self::copyDataObject(
+        $this->copyDataObject(
             Volume::class,
             "Journals_Volume",
             true,
@@ -131,7 +119,7 @@ class MigrateDataTask extends BuildTask
             self::$journal_id,
             DataObject::get_one(Journal::class)->ID,
             false,
-            'copyIssues',
+            'copyIssues'
         );
     }
 
@@ -139,19 +127,17 @@ class MigrateDataTask extends BuildTask
         $className,
         $tableName,
         $incrementID = true,
-        $parentIDLabel = '',
+        $parentLabel = '',
         $parentID = 0,
         $parentPageID = 0,
         $hasAuthors = false,
-        $methodName = '',
+        $method = ''
     ) {
-        self::Connect(self::$op);
         $items = self::Records(
             $tableName,
-            $parentIDLabel ? "WHERE $parentIDLabel = $parentID" : ''
+            $parentLabel ? "WHERE {$parentLabel} = {$parentID}" : '',
+            self::$op
         );
-
-        self::Connect(self::$this_website);
         foreach ($items as $item) {
             $page = self::CreateItem(
                 $item,
@@ -160,128 +146,137 @@ class MigrateDataTask extends BuildTask
                 $parentPageID,
                 $incrementID
             );
-            if ($methodName) {
-                $this->$methodName($item['ID'], $page->ID);
+            if ($method) {
+                $this->$method($item['ID'], $page->ID);
             }
             if ($hasAuthors) {
-                self::copyAuthors($page, $item['ID']);
+                $this->copyAuthors($page, $item['ID']);
             }
         }
     }
 
-    public static function CopyElements($record, $page)
+    public function copySiteConfig()
     {
-        self::Connect(self::$op);
-        $id = $record['ID'];
-        $result = DB::query("SELECT ElementalAreaID FROM Page WHERE ID = $id")->record();
-        if (!$result) {
-            self::Connect(self::$this_website);
-            return;
-        }
-        $elementalAreaID = $result["ElementalAreaID"];
+        // switch to OP
+        DB::connect([
+            'database' => self::$op,
+            'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+            'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+            'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+            'password' => Environment::getEnv("SS_DATABASE_PASSWORD"),
+        ]);
+        $res = DB::query("SELECT * FROM SiteConfig WHERE SubsiteID = " . self::$subsite_id);
 
-        if ($elementalAreaID) {
-            self::Connect(self::$op);
-            $items = self::Records(
-                "Element",
-                "WHERE ParentID = $elementalAreaID"
-            );
-
-            foreach ($items as $item) {
-                self::Connect(self::$op);
-                $id = $item["ID"];
-                $content = DB::query("SELECT * FROM ElementContent WHERE ID = $id")->record();
-
-                self::Connect(self::$this_website);
-                $page->Content .= $content ? $content["HTML"] : '';
-            }
-        }
-
-        self::Connect(self::$this_website);
+        // switch back
+        DB::connect([
+            'database' => self::$this_website,
+            'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+            'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+            'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+            'password' => Environment::getEnv("SS_DATABASE_PASSWORD"),
+        ]);
+        $cfg = SiteConfig::create();
+        $cfg->update($res->record());
+        self::Log("Creating SiteConfig #{$cfg->ID}...");
+        $cfg->write();
     }
 
     public function copyPages()
     {
-        self::Connect(self::$op);
-        $records = SiteTree::get()->filter("SubsiteID", self::$subsite_id)->toArray();
+        // load pages from OP
+        DB::connect([
+            'database' => self::$op,
+            'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+            'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+            'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+            'password' => Environment::getEnv("SS_DATABASE_PASSWORD"),
+        ]);
+        $records = SiteTree::get()
+            ->filter("SubsiteID", self::$subsite_id)
+            ->toArray();
 
-        self::Connect(self::$this_website);
-        $items = [];
-
-        foreach ($records as $record) {
-            $className = $record->ClassName;
-            if ($record->Title == "Journal") {
-                $className = Journal::class;
-            }
-            self::Log("Title: $record->Title...");
-            self::Log("className: $className...");
-            $items[$record->ID] = self::CreateItem(
-                $record->toMap(),
-                $className,
-                true,
-            );
+        // switch back
+        DB::connect([
+            'database' => self::$this_website,
+            'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+            'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+            'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+            'password' => Environment::getEnv("SS_DATABASE_PASSWORD"),
+        ]);
+        $newItems = [];
+        foreach ($records as $rec) {
+            $cls = ($rec->Title === "Journal") ? Journal::class : $rec->ClassName;
+            self::Log("Importing page '{$rec->Title}' as {$cls}...");
+            $newItems[$rec->ID] = self::CreateItem($rec->toMap(), $cls, true);
         }
-
-        // Fix parent IDs
-        foreach ($records as $record) {
-            if ($record->ParentID) {
-                $items[$record->ID]->ParentID = $items[$items[$record->ID]->ParentID]->ID;
-                $items[$record->ID]->write();
-                $items[$record->ID]->publishSingle();
+        foreach ($records as $rec) {
+            if ($rec->ParentID) {
+                $parentID = $newItems[$newItems[$rec->ID]->ParentID]->ID;
+                $newItems[$rec->ID]->ParentID = $parentID;
+                $newItems[$rec->ID]->write();
+                $newItems[$rec->ID]->publishSingle();
             }
         }
-
-        // Scopes
         $home = DataObject::get_one(RedirectorPage::class);
-        if ($home?->ID && $home->Title == "Home") {
+        if ($home?->ID && $home->Title === "Home") {
             $home->LinkToID = DataObject::get_one(Journal::class)->ID;
             $home->write();
             $home->publishSingle();
         }
     }
 
-    public function copySiteConfig()
+    public static function CopyElements($record, $page)
     {
-        self::Connect(self::$op);
-        $subsite_id = self::$subsite_id;
-        $result = DB::query("SELECT * FROM SiteConfig WHERE SubsiteID = $subsite_id");
-
-        self::Connect(self::$this_website);
-        $siteconfig = SiteConfig::create();
-        $siteconfig->update($result->record());
-        self::Log("Creating SiteConfig #$siteconfig->ID...");
-        $siteconfig->write();
-    }
-
-    public static function ClearRecords()
-    {
-        foreach (
-            [
-                'SiteTree',
-                'VirtualPage',
-                'ErrorPage',
-                'RedirectorPage',
-                'Journal_Pages_Volume',
-                'Journal_Pages_Issue',
-                'Journal_Pages_Article',
-                'Journal_Models_Author'
-            ] as $tableName
-        ) {
-            self::Delete($tableName);
-            self::Delete("{$tableName}_Live");
-            self::Delete("{$tableName}_Versions");
+        // get elemental area from OP
+        DB::connect([
+            'database' => self::$op,
+            'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+            'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+            'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+            'password' => Environment::getEnv("SS_DATABASE_PASSWORD"),
+        ]);
+        $res = DB::query("SELECT ElementalAreaID FROM Page WHERE ID = {$record['ID']}")->record();
+        if (!$res) {
+            // back to site
+            DB::connect([
+                'database' => self::$this_website,
+                'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+                'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+                'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+                'password' => Environment::getEnv("SS_DATABASE_PASSWORD"),
+            ]);
+            return;
         }
-
-        foreach (
-            [
-                'Issues',
-                'Articles'
-            ] as $relationship
-        ) {
-            self::Delete("Journal_Models_Author_$relationship");
+        $areaID = $res["ElementalAreaID"];
+        $items  = DB::query("SELECT * FROM Element WHERE ParentID = {$areaID}");
+        // back to site
+        DB::connect([
+            'database' => self::$this_website,
+            'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+            'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+            'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+            'password' => Environment::getEnv("SS_DATABASE_PASSWORD"),
+        ]);
+        foreach ($items as $item) {
+            // fetch HTML from OP
+            DB::connect([
+                'database' => self::$op,
+                'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+                'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+                'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+                'password' => Environment::getEnv("SS_DATABASE_PASSWORD"),
+            ]);
+            $c = DB::query("SELECT HTML FROM ElementContent WHERE ID = {$item['ID']}")->record();
+            // back to site
+            DB::connect([
+                'database' => self::$this_website,
+                'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+                'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+                'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+                'password' => Environment::getEnv("SS_DATABASE_PASSWORD"),
+            ]);
+            $page->Content .= $c ? $c["HTML"] : '';
         }
-
-        self::Delete("SiteConfig");
     }
 
     public static function CreateItem(
@@ -300,72 +295,91 @@ class MigrateDataTask extends BuildTask
         if ($incrementID) {
             $item->ID = self::$id++;
         }
-        self::Log("Creating $class #$item->ID...");
+        self::Log("Creating {$class} #{$item->ID}...");
 
-        if (!$item->ElementalAreaID && $class == Page::class) {
-            self::Connect(self::$op);
-            $items = self::Records(
-                "Page",
-                "WHERE ID = " . $data['ID']
-            );
-            if (count($items)) {
-                $item->ElementalAreaID = $items[0]["ElementalAreaID"];
+        if (!$item->ElementalAreaID && $class === Page::class) {
+            $elems = self::Records("Page", "WHERE ID = {$data['ID']}", self::$op);
+            if (count($elems)) {
+                $item->ElementalAreaID = $elems[0]["ElementalAreaID"];
             }
-            self::Connect(self::$this_website);
         }
-
         if ($item->ElementalAreaID) {
             self::CopyElements($data, $item);
         }
-
         $item->write();
-
         if ($publish) {
             $item->publishSingle();
         }
-
         return $item;
     }
 
-    public static function Records($tableName, $where = '')
+    public static function Records($table, $where = '', $dbName = null)
     {
-        $result = DB::query("SELECT * FROM $tableName $where");
-        $records = [];
-        while ($record = $result->record()) {
-            $records[] = $record;
+        $cacheFile = Environment::getEnv("SS_RECORDS_CACHE_FILE");
+        if (!$cacheFile) {
+            throw new \RuntimeException("Env SS_RECORDS_CACHE_FILE not set");
         }
-        return $records;
-    }
 
-    public static function Delete($tableName)
-    {
-        self::Log("Deleting $tableName...");
-        DB::query("DELETE FROM $tableName");
+        if (!self::$cache) {
+            self::$cache = file_exists($cacheFile)
+                ? json_decode(file_get_contents($cacheFile), true)
+                : [];
+        }
+
+        $key = "{$dbName}|{$table}|{$where}";
+        if (isset(self::$cache[$key])) {
+            // restore target site DB
+            DB::connect([
+                'database' => self::$this_website,
+                'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+                'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+                'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+                'password' => Environment::getEnv("SS_DATABASE_PASSWORD"),
+            ]);
+            return self::$cache[$key];
+        }
+
+        if ($dbName) {
+            DB::connect([
+                'database' => $dbName,
+                'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+                'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+                'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+                'password' => Environment::getEnv("SS_DATABASE_PASSWORD"),
+            ]);
+        }
+
+        $result = DB::query("SELECT * FROM {$table} {$where}");
+        $records = [];
+        while ($r = $result->record()) {
+            $records[] = $r;
+        }
+
+        self::$cache[$key] = $records;
+        file_put_contents($cacheFile, json_encode(self::$cache, JSON_PRETTY_PRINT));
+
+        // reset to target site DB
+        DB::connect([
+            'database' => self::$this_website,
+            'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
+            'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
+            'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
+            'password' => Environment::getEnv("SS_DATABASE_PASSWORD"),
+        ]);
+
+        return $records;
     }
 
     public static function Log($str, $htmltag = null)
     {
-        $datestamp = '[' . date('Y-m-d H:i:s') . ']';
-        if (!Director::is_cli() && !Director::is_ajax()) {
-            if ($htmltag) {
-                echo "<$htmltag>$datestamp $str</$htmltag><br/>";
-            } else {
-                echo "$datestamp $str<br/>";
-            }
-        } else {
-            echo "$datestamp $str\n";
-        }
-        Injector::inst()->get(Logger::class)->info(get_called_class() . ': ' . $str);
-    }
-
-    public static function Connect($name)
-    {
-        DB::connect([
-            'database' => $name,
-            'type'     => Environment::getEnv("SS_DATABASE_CLASS"),
-            'server'   => Environment::getEnv("SS_DATABASE_SERVER"),
-            'username' => Environment::getEnv("SS_DATABASE_USERNAME"),
-            'password' => Environment::getEnv("SS_DATABASE_PASSWORD")
-        ]);
+        $stamp = '[' . date('Y-m-d H:i:s') . ']';
+        $out = Director::is_cli() || Director::is_ajax()
+            ? "{$stamp} {$str}\n"
+            : ($htmltag
+                ? "<{$htmltag}>{$stamp} {$str}</{$htmltag}><br/>"
+                : "{$stamp} {$str}<br/>"
+            );
+        echo $out;
+        Injector::inst()->get(Logger::class)->info(__CLASS__ . ': ' . $str);
     }
 }
