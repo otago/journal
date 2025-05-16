@@ -8,35 +8,32 @@ use Journal\Pages\Issue as IssuePage;
 use Journal\Pages\Article as ArticlePage;
 use Journal\Models\Author;
 use SilverStripe\Dev\BuildTask;
-use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Core\Environment;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Versioned\Versioned;
 use SilverStripe\Assets\File as AssetFile;
-use SilverStripe\Assets\File;
+use SilverStripe\Assets\Image as AssetImage;
 
 class MigrateDataTask extends BuildTask
 {
     protected $title       = 'Migrate Data Task';
-    protected $description = 'Purges all content, including files, then imports Journal structure with Authors and local Article files';
+    protected $description = 'Purges all content, then imports Journal structure with Authors plus assets, publishing after assets';
 
     public function run($request)
     {
         // 0) Purge all File records
-        $files      = File::get();
-        $totalFiles = $files->count();
+        $allFiles   = AssetFile::get();
+        $totalFiles = $allFiles->count();
         echo "➡️ Purging {$totalFiles} File records...\n";
-        foreach ($files as $i => $file) {
+        foreach ($allFiles as $i => $file) {
             $idx  = $i + 1;
             $name = $file->getFilename() ?: '[no filename]';
             if ($file->hasExtension(Versioned::class)) {
                 echo "[{$idx}/{$totalFiles}] Archiving File #{$file->ID} “{$name}”…\n";
                 $file->doArchive();
-                echo "[{$idx}/{$totalFiles}] Archived\n";
             }
-            echo "[{$idx}/{$totalFiles}] Deleting File #{$file->ID} “{$name}”…\n";
+            echo "[{$idx}/{$totalFiles}] Deleting File #{$file->ID}…\n";
             $file->delete();
-            echo "[{$idx}/{$totalFiles}] Deleted\n";
         }
         echo "✅ File records purged\n\n";
 
@@ -45,19 +42,13 @@ class MigrateDataTask extends BuildTask
         $totalPages = $pages->count();
         echo "➡️ Purging {$totalPages} pages...\n";
         foreach ($pages as $i => $page) {
-            $idx   = $i + 1;
-            $cls   = $page->ClassName;
-            $id    = $page->ID;
-            $title = $page->Title ?: '[no title]';
-
+            $idx = $i + 1;
             if ($page->hasExtension(Versioned::class)) {
-                echo "[{$idx}/{$totalPages}] Archiving {$cls} #{$id} “{$title}”…\n";
+                echo "[{$idx}/{$totalPages}] Archiving {$page->ClassName} #{$page->ID}…\n";
                 $page->doArchive();
-                echo "[{$idx}/{$totalPages}] Archived\n";
             }
-            echo "[{$idx}/{$totalPages}] Deleting {$cls} #{$id}…\n";
+            echo "[{$idx}/{$totalPages}] Deleting page #{$page->ID}…\n";
             $page->delete();
-            echo "[{$idx}/{$totalPages}] Deleted\n";
         }
         echo "✅ Pages purged\n\n";
 
@@ -66,16 +57,13 @@ class MigrateDataTask extends BuildTask
         $totalAuth = $authors->count();
         echo "➡️ Purging {$totalAuth} authors...\n";
         foreach ($authors as $i => $a) {
-            $idx  = $i + 1;
-            $name = $a->Name() ?: '[no name]';
+            $idx = $i + 1;
             if ($a->hasExtension(Versioned::class)) {
-                echo "[{$idx}/{$totalAuth}] Archiving Author #{$a->ID} “{$name}”…\n";
+                echo "[{$idx}/{$totalAuth}] Archiving Author #{$a->ID}…\n";
                 $a->doArchive();
-                echo "[{$idx}/{$totalAuth}] Archived\n";
             }
-            echo "[{$idx}/{$totalAuth}] Deleting Author #{$a->ID} “{$name}”…\n";
+            echo "[{$idx}/{$totalAuth}] Deleting Author #{$a->ID}…\n";
             $a->delete();
-            echo "[{$idx}/{$totalAuth}] Deleted\n";
         }
         echo "✅ Authors purged\n\n";
 
@@ -90,78 +78,141 @@ class MigrateDataTask extends BuildTask
             echo "❌ JSON decode error: " . json_last_error_msg() . "\n";
             return;
         }
-        echo "✅ Loaded JSON dump\n\n";
 
-        // 4) Count items
-        $count = 1; // journal
-        foreach ($dump['Volumes'] ?? [] as $vol) {
-            $count++;
-            foreach ($vol['Issues'] ?? [] as $iss) {
-                $count++;
-                $count += count($iss['Authors'] ?? []);
-                foreach ($iss['Articles'] ?? [] as $art) {
-                    $count++;
-                    $count += count($art['Authors'] ?? []);
+        // 4) Count items safely
+        $totalItems = 1; // journal
+        foreach ($dump['Volumes'] ?? [] as $v) {
+            $totalItems++;
+            foreach ($v['Issues'] ?? [] as $i) {
+                $totalItems++;
+                $totalItems += count($i['Authors'] ?? []);
+                foreach ($i['Articles'] ?? [] as $a) {
+                    $totalItems++;
+                    $totalItems += count($a['Authors'] ?? []);
                 }
             }
         }
-        echo "➡️ Importing {$count} items...\n";
+        echo "➡️ Importing {$totalItems} items...\n";
 
-        // 5) Import
-        $current   = 0;
-        $nextId    = 1;
-        $assetsDir = rtrim(Environment::getEnv('SS_DUMP_ASSETS_DIR') ?: '', '/');
+        // 5) Import workflow
+        $current    = 0;
+        $nextPageID = 1;
+        $assetsDir  = rtrim(Environment::getEnv('SS_DUMP_ASSETS_DIR') ?: '', '/');
 
         // Journal
         $current++;
-        $journal       = JournalPage::create();
-        $journal->ID   = $nextId;
+        $journal        = JournalPage::create();
+        $journal->ID    = $nextPageID;
         $journal->Title = $dump['Title'] ?? 'Untitled Journal';
         $journal->write();
         if ($journal->hasExtension(Versioned::class)) {
             $journal->publishSingle();
         }
-        echo "[{$current}/{$count}] Journal #{$nextId} “{$journal->Title}” created\n";
-        $nextId++;
+        echo "[{$current}/{$totalItems}] Journal created (#{$nextPageID})\n";
+        $nextPageID++;
 
         // Volumes → Issues → Articles → Authors
         foreach ($dump['Volumes'] ?? [] as $volData) {
             // Volume
             $current++;
             $vol             = VolumePage::create();
-            $vol->ID         = $nextId;
+            $vol->ID         = $nextPageID;
             $vol->ParentID   = $journal->ID;
-            $vol->Title      = $volData['Title'] ?? 'Untitled Volume';
-            $vol->URLSegment = $volData['URLSegment'] ?? null;
+            $vol->Title      = $volData['Title'] ?? '';
+            $vol->URLSegment = $volData['URLSegment'] ?? '';
             $vol->write();
+
+            // Cover
+            if (!empty($volData['Cover']['LocalPath'])) {
+                $src = $volData['Cover']['LocalPath'];
+                if (file_exists($src)) {
+                    $img = AssetImage::create();
+                    $img->setFromLocalFile($src, basename($src));
+                    $img->write();
+                    if ($img->hasExtension(Versioned::class)) {
+                        $img->publishSingle();
+                    }
+                    $vol->CoverID = $img->ID;
+                    $vol->write();
+                }
+            }
+
+            // Image
+            if (!empty($volData['Image']['LocalPath'])) {
+                $src = $volData['Image']['LocalPath'];
+                if (file_exists($src)) {
+                    $img = AssetImage::create();
+                    $img->setFromLocalFile($src, basename($src));
+                    $img->write();
+                    if ($img->hasExtension(Versioned::class)) {
+                        $img->publishSingle();
+                    }
+                    $vol->ImageID = $img->ID;
+                    $vol->write();
+                }
+            }
+
+            // Publish Volume
             if ($vol->hasExtension(Versioned::class)) {
                 $vol->publishSingle();
             }
-            echo "[{$current}/{$count}] Volume #{$nextId} “{$vol->Title}” created\n";
-            $nextId++;
+            echo "[{$current}/{$totalItems}] Volume created (#{$nextPageID})\n";
+            $nextPageID++;
 
+            // Issues
             foreach ($volData['Issues'] ?? [] as $issData) {
-                // Issue
                 $current++;
                 $iss             = IssuePage::create();
-                $iss->ID         = $nextId;
+                $iss->ID         = $nextPageID;
                 $iss->ParentID   = $vol->ID;
-                $iss->Title      = $issData['Title'] ?? 'Untitled Issue';
+                $iss->Title      = $issData['Title'] ?? '';
                 $iss->Number     = $issData['Number'] ?? 0;
-                $iss->URLSegment = $issData['URLSegment'] ?? null;
+                $iss->URLSegment = $issData['URLSegment'] ?? '';
                 $iss->write();
+
+                // File
+                if (!empty($issData['File']['LocalPath'])) {
+                    $src = $issData['File']['LocalPath'];
+                    if (file_exists($src)) {
+                        $file = AssetFile::create();
+                        $file->setFromLocalFile($src, basename($src));
+                        $file->write();
+                        if ($file->hasExtension(Versioned::class)) {
+                            $file->publishSingle();
+                        }
+                        $iss->FileID = $file->ID;
+                        $iss->write();
+                    }
+                }
+
+                // Cover
+                if (!empty($issData['Cover']['LocalPath'])) {
+                    $src = $issData['Cover']['LocalPath'];
+                    if (file_exists($src)) {
+                        $img = AssetImage::create();
+                        $img->setFromLocalFile($src, basename($src));
+                        $img->write();
+                        if ($img->hasExtension(Versioned::class)) {
+                            $img->publishSingle();
+                        }
+                        $iss->CoverID = $img->ID;
+                        $iss->write();
+                    }
+                }
+
+                // Publish Issue
                 if ($iss->hasExtension(Versioned::class)) {
                     $iss->publishSingle();
                 }
-                echo "[{$current}/{$count}] Issue #{$nextId} “{$iss->Title}” created\n";
-                $nextId++;
+                echo "[{$current}/{$totalItems}] Issue created (#{$nextPageID})\n";
+                $nextPageID++;
 
                 // Issue Authors
                 foreach ($issData['Authors'] ?? [] as $idx => $authData) {
                     $current++;
                     $fn     = $authData['FirstName'] ?? '';
-                    $sn     = $authData['Surname'] ?? '';
-                    $or     = $authData['ORCID'] ?? '';
+                    $sn     = $authData['Surname']  ?? '';
+                    $or     = $authData['ORCID']    ?? '';
                     $filter = $or
                         ? ['ORCID' => $or]
                         : ['FirstName' => $fn, 'Surname' => $sn];
@@ -172,49 +223,46 @@ class MigrateDataTask extends BuildTask
                         $author->publishSingle();
                     }
                     $iss->Authors()->add($author, ['Sort' => $idx]);
-                    echo "[{$current}/{$count}]  • Issue Author #{$author->ID} “{$author->Name()}” created\n";
                 }
 
                 // Articles
                 foreach ($issData['Articles'] ?? [] as $artData) {
                     $current++;
                     $art             = ArticlePage::create();
-                    $art->ID         = $nextId;
+                    $art->ID         = $nextPageID;
                     $art->ParentID   = $iss->ID;
-                    $art->Title      = $artData['Title'] ?? 'Untitled Article';
-                    $art->URLSegment = $artData['URLSegment'] ?? null;
+                    $art->Title      = $artData['Title'] ?? '';
+                    $art->URLSegment = $artData['URLSegment'] ?? '';
                     $art->write();
-                    if ($art->hasExtension(Versioned::class)) {
-                        $art->publishSingle();
-                    }
-                    echo "[{$current}/{$count}] Article #{$nextId} “{$art->Title}” created\n";
 
-                    // Local file attachment
-                    if (!empty($artData['File']) && isset($artData['File']['LocalPath'])) {
-                        $srcPath = $artData['File']['LocalPath'];
-                        if (file_exists($srcPath)) {
+                    // File
+                    if (!empty($artData['File']['LocalPath'])) {
+                        $src = $artData['File']['LocalPath'];
+                        if (file_exists($src)) {
                             $file = AssetFile::create();
-                            $file->setFromLocalFile($srcPath, $artData['File']['Filename']);
+                            $file->setFromLocalFile($src, $artData['File']['Filename']);
                             $file->write();
                             if ($file->hasExtension(Versioned::class)) {
                                 $file->publishSingle();
                             }
                             $art->FileID = $file->ID;
                             $art->write();
-                            echo "[    ]   • Attached file #{$file->ID} “{$file->Filename}” from {$srcPath}\n";
-                        } else {
-                            echo "[    ]   ⚠️ Missing file at {$srcPath}\n";
                         }
                     }
 
-                    $nextId++;
+                    // Publish Article
+                    if ($art->hasExtension(Versioned::class)) {
+                        $art->publishSingle();
+                    }
+                    echo "[{$current}/{$totalItems}] Article created (#{$nextPageID})\n";
+                    $nextPageID++;
 
                     // Article Authors
                     foreach ($artData['Authors'] ?? [] as $idx => $authData) {
                         $current++;
                         $fn     = $authData['FirstName'] ?? '';
-                        $sn     = $authData['Surname'] ?? '';
-                        $or     = $authData['ORCID'] ?? '';
+                        $sn     = $authData['Surname']  ?? '';
+                        $or     = $authData['ORCID']    ?? '';
                         $filter = $or
                             ? ['ORCID' => $or]
                             : ['FirstName' => $fn, 'Surname' => $sn];
@@ -225,12 +273,11 @@ class MigrateDataTask extends BuildTask
                             $author->publishSingle();
                         }
                         $art->Authors()->add($author, ['Sort' => $idx]);
-                        echo "[{$current}/{$count}]  • Article Author #{$author->ID} “{$author->Name()}” created\n";
                     }
                 }
             }
         }
 
-        echo "🎉 Import complete: {$current}/{$count} items processed\n";
+        echo "🎉 Import complete: {$current}/{$totalItems} items processed\n";
     }
 }
