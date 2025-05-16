@@ -13,6 +13,7 @@ use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Versioned\Versioned;
 use SilverStripe\Assets\File as AssetFile;
 use SilverStripe\Assets\Image as AssetImage;
+use SilverStripe\Assets\Folder;
 
 class MigrateDataTask extends BuildTask
 {
@@ -39,29 +40,23 @@ class MigrateDataTask extends BuildTask
     {
         // 0) Purge all File records
         foreach (AssetFile::get() as $file) {
-            if ($file->hasExtension(Versioned::class)) {
-                $file->doArchive();
-            }
+            if ($file->hasExtension(Versioned::class)) $file->doArchive();
             $file->delete();
         }
 
         // 1) Purge all pages
         foreach (SiteTree::get() as $page) {
-            if ($page->hasExtension(Versioned::class)) {
-                $page->doArchive();
-            }
+            if ($page->hasExtension(Versioned::class)) $page->doArchive();
             $page->delete();
         }
 
         // 2) Purge all authors
         foreach (Author::get() as $a) {
-            if ($a->hasExtension(Versioned::class)) {
-                $a->doArchive();
-            }
+            if ($a->hasExtension(Versioned::class)) $a->doArchive();
             $a->delete();
         }
 
-        // 3) Load JSON
+        // 3) Load JSON dump
         $path = Environment::getEnv('SS_RECORDS_CACHE_FILE');
         if (!$path || !is_readable($path)) {
             echo "❌ Cannot read JSON at “{$path}”\n";
@@ -73,8 +68,8 @@ class MigrateDataTask extends BuildTask
             return;
         }
 
-        // 4) Count items
-        $total = 1;
+        // 4) Count total items
+        $total = 1; // journal
         foreach ($dump['Volumes'] ?? [] as $v) {
             $total++;
             foreach ($v['Issues'] ?? [] as $i) {
@@ -88,111 +83,114 @@ class MigrateDataTask extends BuildTask
         }
         echo "➡️ Importing {$total} items...\n\n";
 
-        // Pre-cook list of Author db fields
-        $authorFields = array_keys(Author::config()->get('db') ?? []);
+        // 5) Gather Author db fields
+        $authorFields = array_keys(Author::config()->get('db') ?: []);
 
         $current    = 0;
         $nextPageID = 1;
 
-        // Journal
+        // Helper: import a file into the same relative asset folder
+        $importFile = function (array $meta) {
+            if (empty($meta['LocalPath']) || !file_exists($meta['LocalPath'])) {
+                throw new \RuntimeException("Missing source file {$meta['Filename']}");
+            }
+            // strip leading "/assets" from RelativeURLDir, then trim slashes
+            $raw    = $meta['RelativeURLDir'] ?? '';
+            $relDir = trim(preg_replace('#^/assets#', '', $raw), '/');
+            // ensure folder exists
+            $folder = Folder::find_or_make($relDir);
+            $dest   = ($relDir ? "{$relDir}/" : '') . $meta['Filename'];
+            $file   = AssetFile::create();
+            $file->setFromLocalFile($meta['LocalPath'], $dest);
+            $file->write();
+            if ($file->hasExtension(Versioned::class)) {
+                $file->publishSingle();
+            }
+            return $file;
+        };
+
+        // 6) Create Journal
         $current++;
+        echo "[{$current}/{$total}] Creating Journal…\n";
         $jp = JournalPage::create();
         $jp->ID = $nextPageID;
         foreach ($dump as $k => $v) {
-            if (in_array($k, $this->skipFields, true)) {
-                continue;
-            }
-            if ($jp->hasDatabaseField($k)) {
-                $jp->$k = $v;
-            }
+            if (in_array($k, $this->skipFields, true)) continue;
+            if ($jp->hasDatabaseField($k)) $jp->$k = $v;
         }
         $jp->write();
-        if ($jp->hasExtension(Versioned::class)) {
-            $jp->publishSingle();
-        }
-        echo "[{$current}/{$total}] Journal #{$nextPageID} “{$jp->Title}”\n";
+        if ($jp->hasExtension(Versioned::class)) $jp->publishSingle();
+        echo "[{$current}/{$total}] Journal #{$nextPageID} “{$jp->Title}” created\n\n";
         $nextPageID++;
 
-        // Volumes → Issues → Articles → Authors
+        // 7) Volumes → Issues → Articles → Authors
         foreach ($dump['Volumes'] ?? [] as $volData) {
             $current++;
+            echo "[{$current}/{$total}] Creating Volume…\n";
             $vp = VolumePage::create();
             $vp->ID       = $nextPageID;
             $vp->ParentID = $jp->ID;
             foreach ($volData as $k => $v) {
                 if (in_array($k, $this->skipFields, true)) continue;
-                if ($vp->hasDatabaseField($k)) {
-                    $vp->$k = $v;
-                }
+                if ($vp->hasDatabaseField($k)) $vp->$k = $v;
             }
             $vp->write();
+
             // Cover
             if (!empty($volData['Cover']['LocalPath'])) {
-                $img = AssetImage::create();
-                $img->setFromLocalFile($volData['Cover']['LocalPath'], basename($volData['Cover']['LocalPath']));
-                $img->write();
-                if ($img->hasExtension(Versioned::class)) {
-                    $img->publishSingle();
-                }
-                $vp->CoverID = $img->ID;
+                echo "  Attaching Volume Cover…\n";
+                $cover = $importFile($volData['Cover']);
+                $vp->CoverID = $cover->ID;
             }
             // Image
             if (!empty($volData['Image']['LocalPath'])) {
-                $img = AssetImage::create();
-                $img->setFromLocalFile($volData['Image']['LocalPath'], basename($volData['Image']['LocalPath']));
-                $img->write();
-                if ($img->hasExtension(Versioned::class)) {
-                    $img->publishSingle();
-                }
+                echo "  Attaching Volume Image…\n";
+                $img = $importFile($volData['Image']);
                 $vp->ImageID = $img->ID;
             }
             $vp->write();
-            if ($vp->hasExtension(Versioned::class)) {
-                $vp->publishSingle();
-            }
-            echo "[{$current}/{$total}] Volume #{$nextPageID} “{$vp->Title}”\n";
+            if ($vp->hasExtension(Versioned::class)) $vp->publishSingle();
+            echo "[{$current}/{$total}] Volume #{$nextPageID} “{$vp->Title}” created\n\n";
             $nextPageID++;
 
+            // Issues
             foreach ($volData['Issues'] ?? [] as $issData) {
                 $current++;
+                echo "[{$current}/{$total}] Creating Issue…\n";
                 $ip = IssuePage::create();
                 $ip->ID       = $nextPageID;
                 $ip->ParentID = $vp->ID;
                 foreach ($issData as $k => $v) {
                     if (in_array($k, $this->skipFields, true)) continue;
-                    if ($ip->hasDatabaseField($k)) {
-                        $ip->$k = $v;
-                    }
+                    if ($ip->hasDatabaseField($k)) $ip->$k = $v;
                 }
                 $ip->write();
+
                 // File
                 if (!empty($issData['File']['LocalPath'])) {
-                    $f = AssetFile::create();
-                    $f->setFromLocalFile($issData['File']['LocalPath'], basename($issData['File']['LocalPath']));
-                    $f->write();
-                    if ($f->hasExtension(Versioned::class)) $f->publishSingle();
+                    echo "  Attaching Issue File…\n";
+                    $f = $importFile($issData['File']);
                     $ip->FileID = $f->ID;
                 }
                 // Cover
                 if (!empty($issData['Cover']['LocalPath'])) {
-                    $img = AssetImage::create();
-                    $img->setFromLocalFile($issData['Cover']['LocalPath'], basename($issData['Cover']['LocalPath']));
-                    $img->write();
-                    if ($img->hasExtension(Versioned::class)) $img->publishSingle();
-                    $ip->CoverID = $img->ID;
+                    echo "  Attaching Issue Cover…\n";
+                    $ci = $importFile($issData['Cover']);
+                    $ip->CoverID = $ci->ID;
                 }
                 $ip->write();
                 if ($ip->hasExtension(Versioned::class)) $ip->publishSingle();
-                echo "[{$current}/{$total}] Issue #{$nextPageID} “{$ip->Title}”\n";
+                echo "[{$current}/{$total}] Issue #{$nextPageID} “{$ip->Title}” created\n\n";
                 $nextPageID++;
 
+                // Issue Authors
                 foreach ($issData['Authors'] ?? [] as $idx => $authData) {
                     $current++;
-                    // build filter from all DB fields on Author
+                    echo "[{$current}/{$total}] Creating Issue Author…\n";
                     $filter = [];
-                    foreach ($authorFields as $field) {
-                        if (isset($authData[$field]) && $authData[$field] !== '') {
-                            $filter[$field] = $authData[$field];
+                    foreach ($authorFields as $f) {
+                        if (isset($authData[$f]) && $authData[$f] !== '') {
+                            $filter[$f] = $authData[$f];
                         }
                     }
                     $existing = Author::get()->filter($filter)->first();
@@ -200,43 +198,44 @@ class MigrateDataTask extends BuildTask
                         array_intersect_key($authData, array_flip($authorFields))
                     );
                     $author->write();
-                    if ($author->hasExtension(Versioned::class)) {
-                        $author->publishSingle();
-                    }
+                    if ($author->hasExtension(Versioned::class)) $author->publishSingle();
                     $ip->Authors()->add($author, ['Sort' => $idx]);
+                    echo "[{$current}/{$total}] Issue Author #{$author->ID} “{$author->Name()}” added\n";
                 }
+                echo "\n";
 
+                // Articles
                 foreach ($issData['Articles'] ?? [] as $artData) {
                     $current++;
+                    echo "[{$current}/{$total}] Creating Article…\n";
                     $ap = ArticlePage::create();
                     $ap->ID       = $nextPageID;
                     $ap->ParentID = $ip->ID;
                     foreach ($artData as $k => $v) {
                         if (in_array($k, $this->skipFields, true)) continue;
-                        if ($ap->hasDatabaseField($k)) {
-                            $ap->$k = $v;
-                        }
+                        if ($ap->hasDatabaseField($k)) $ap->$k = $v;
                     }
                     $ap->write();
+
                     // File
                     if (!empty($artData['File']['LocalPath'])) {
-                        $f = AssetFile::create();
-                        $f->setFromLocalFile($artData['File']['LocalPath'], basename($artData['File']['LocalPath']));
-                        $f->write();
-                        if ($f->hasExtension(Versioned::class)) $f->publishSingle();
-                        $ap->FileID = $f->ID;
+                        echo "  Attaching Article File…\n";
+                        $af = $importFile($artData['File']);
+                        $ap->FileID = $af->ID;
                     }
                     $ap->write();
                     if ($ap->hasExtension(Versioned::class)) $ap->publishSingle();
-                    echo "[{$current}/{$total}] Article #{$nextPageID} “{$ap->Title}”\n";
+                    echo "[{$current}/{$total}] Article #{$nextPageID} “{$ap->Title}” created\n\n";
                     $nextPageID++;
 
+                    // Article Authors
                     foreach ($artData['Authors'] ?? [] as $idx => $authData) {
                         $current++;
+                        echo "[{$current}/{$total}] Creating Article Author…\n";
                         $filter = [];
-                        foreach ($authorFields as $field) {
-                            if (isset($authData[$field]) && $authData[$field] !== '') {
-                                $filter[$field] = $authData[$field];
+                        foreach ($authorFields as $f) {
+                            if (isset($authData[$f]) && $authData[$f] !== '') {
+                                $filter[$f] = $authData[$f];
                             }
                         }
                         $existing = Author::get()->filter($filter)->first();
@@ -244,15 +243,15 @@ class MigrateDataTask extends BuildTask
                             array_intersect_key($authData, array_flip($authorFields))
                         );
                         $author->write();
-                        if ($author->hasExtension(Versioned::class)) {
-                            $author->publishSingle();
-                        }
+                        if ($author->hasExtension(Versioned::class)) $author->publishSingle();
                         $ap->Authors()->add($author, ['Sort' => $idx]);
+                        echo "[{$current}/{$total}] Article Author #{$author->ID} “{$author->Name()}” added\n";
                     }
+                    echo "\n";
                 }
             }
         }
 
-        echo "\n🎉 Import complete: {$current}/{$total} items processed\n";
+        echo "🎉 Import complete: {$current}/{$total} items processed\n";
     }
 }
