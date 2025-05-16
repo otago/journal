@@ -40,28 +40,61 @@ class MigrateDataTask extends BuildTask
     public function run($request)
     {
         // 0) Purge all File records
-        foreach (AssetFile::get() as $file) {
+        $allFiles   = AssetFile::get();
+        $totalFiles = $allFiles->count();
+        echo "➡️ Purging {$totalFiles} File records...\n";
+        foreach ($allFiles as $i => $file) {
+            $idx  = $i + 1;
+            $name = $file->getFilename() ?: '[no filename]';
+            echo "[{$idx}/{$totalFiles}] ";
             if ($file->hasExtension(Versioned::class)) {
+                echo "Archiving File #{$file->ID} “{$name}”… ";
                 $file->doArchive();
+                echo "archived\n";
             }
+            echo "[{$idx}/{$totalFiles}] Deleting File #{$file->ID}… ";
             $file->delete();
+            echo "deleted\n";
         }
+        echo "✅ File records purged\n\n";
 
         // 1) Purge all pages
-        foreach (SiteTree::get() as $page) {
+        $allPages   = SiteTree::get();
+        $totalPages = $allPages->count();
+        echo "➡️ Purging {$totalPages} pages...\n";
+        foreach ($allPages as $i => $page) {
+            $idx   = $i + 1;
+            $title = $page->Title ?: '[no title]';
+            echo "[{$idx}/{$totalPages}] ";
             if ($page->hasExtension(Versioned::class)) {
+                echo "Archiving {$page->ClassName} #{$page->ID} “{$title}”… ";
                 $page->doArchive();
+                echo "archived\n";
             }
+            echo "[{$idx}/{$totalPages}] Deleting {$page->ClassName} #{$page->ID}… ";
             $page->delete();
+            echo "deleted\n";
         }
+        echo "✅ Pages purged\n\n";
 
         // 2) Purge all authors
-        foreach (Author::get() as $a) {
+        $allAuthors = Author::get();
+        $totalAuth  = $allAuthors->count();
+        echo "➡️ Purging {$totalAuth} authors...\n";
+        foreach ($allAuthors as $i => $a) {
+            $idx  = $i + 1;
+            $name = $a->Name() ?: '[no name]';
+            echo "[{$idx}/{$totalAuth}] ";
             if ($a->hasExtension(Versioned::class)) {
+                echo "Archiving Author #{$a->ID} “{$name}”… ";
                 $a->doArchive();
+                echo "archived\n";
             }
+            echo "[{$idx}/{$totalAuth}] Deleting Author #{$a->ID}… ";
             $a->delete();
+            echo "deleted\n";
         }
+        echo "✅ Authors purged\n\n";
 
         // 3) Load JSON dump
         $path = Environment::getEnv('SS_RECORDS_CACHE_FILE');
@@ -105,21 +138,17 @@ class MigrateDataTask extends BuildTask
             // Determine relative folder under assets (strip leading "/assets")
             $rawDir  = $meta['RelativeURLDir'] ?? '';
             $relDir  = trim(preg_replace('#^/assets#', '', $rawDir), '/');
-            $folder  = Folder::find_or_make($relDir);
-            $dest    = ($relDir ? "{$relDir}/" : '') . $meta['Filename'];
+            Folder::find_or_make($relDir);
 
+            $dest    = ($relDir ? "{$relDir}/" : '') . $meta['Filename'];
             /** @var AssetFile|AssetImage $assetObj */
             $assetObj = Injector::inst()->create($class);
             $assetObj->ID = (int)$meta['ID'];
-
-            // Stream from local path into the asset store
             $assetObj->setFromLocalFile($meta['LocalPath'], $dest);
             $assetObj->write();
-
             if ($assetObj->hasExtension(Versioned::class)) {
                 $assetObj->publishSingle();
             }
-
             return $assetObj;
         };
 
@@ -160,13 +189,11 @@ class MigrateDataTask extends BuildTask
             }
             $vp->write();
 
-            // Cover
             if (!empty($volData['Cover']['LocalPath'])) {
                 echo "  Attaching Volume Cover…\n";
                 $cover = $importAsset($volData['Cover'], AssetImage::class);
                 $vp->CoverID = $cover->ID;
             }
-            // Image
             if (!empty($volData['Image']['LocalPath'])) {
                 echo "  Attaching Volume Image…\n";
                 $img = $importAsset($volData['Image'], AssetImage::class);
@@ -179,7 +206,6 @@ class MigrateDataTask extends BuildTask
             echo "[{$current}/{$total}] Volume #{$nextPageID} “{$vp->Title}” created\n\n";
             $nextPageID++;
 
-            // Issues
             foreach ($volData['Issues'] ?? [] as $issData) {
                 $current++;
                 echo "[{$current}/{$total}] Creating Issue…\n";
@@ -196,13 +222,11 @@ class MigrateDataTask extends BuildTask
                 }
                 $ip->write();
 
-                // File
                 if (!empty($issData['File']['LocalPath'])) {
                     echo "  Attaching Issue File…\n";
                     $f = $importAsset($issData['File'], AssetFile::class);
                     $ip->FileID = $f->ID;
                 }
-                // Cover
                 if (!empty($issData['Cover']['LocalPath'])) {
                     echo "  Attaching Issue Cover…\n";
                     $ci = $importAsset($issData['Cover'], AssetImage::class);
@@ -215,7 +239,6 @@ class MigrateDataTask extends BuildTask
                 echo "[{$current}/{$total}] Issue #{$nextPageID} “{$ip->Title}” created\n\n";
                 $nextPageID++;
 
-                // Issue Authors
                 foreach ($issData['Authors'] ?? [] as $idx => $authData) {
                     $current++;
                     echo "[{$current}/{$total}] Creating Issue Author…\n";
@@ -238,7 +261,6 @@ class MigrateDataTask extends BuildTask
                 }
                 echo "\n";
 
-                // Articles
                 foreach ($issData['Articles'] ?? [] as $artData) {
                     $current++;
                     echo "[{$current}/{$total}] Creating Article…\n";
@@ -255,7 +277,6 @@ class MigrateDataTask extends BuildTask
                     }
                     $ap->write();
 
-                    // File
                     if (!empty($artData['File']['LocalPath'])) {
                         echo "  Attaching Article File…\n";
                         $af = $importAsset($artData['File'], AssetFile::class);
@@ -268,7 +289,6 @@ class MigrateDataTask extends BuildTask
                     echo "[{$current}/{$total}] Article #{$nextPageID} “{$ap->Title}” created\n\n";
                     $nextPageID++;
 
-                    // Article Authors
                     foreach ($artData['Authors'] ?? [] as $idx => $authData) {
                         $current++;
                         echo "[{$current}/{$total}] Creating Article Author…\n";
