@@ -14,22 +14,32 @@ use SilverStripe\Versioned\Versioned;
 
 class MigrateDataTask extends BuildTask
 {
-    protected $title = 'Migrate Data Task';
-    protected $description = 'Wipes all pages and recreates Journal, Volume, Issue & Article pages with manually assigned sequential IDs';
+    protected $title       = 'Migrate Data Task';
+    protected $description = 'Wipes all pages with progress on archiving, then imports Journal structure with progress reporting';
 
     public function run($request)
     {
-        // 1) Tear down all existing pages
-        $all = SiteTree::get();
+        // 1) Purge everything with archiving progress
+        $all       = SiteTree::get();
+        $totalPurge = $all->count();
+        $i = 0;
         foreach ($all as $old) {
+            $i++;
+            $cls   = $old->ClassName;
+            $id    = $old->ID;
+            $title = $old->Title;
+
             if ($old->hasExtension(Versioned::class)) {
                 $old->doArchive();
+                echo "[Archive {$i}/{$totalPurge}] 🗄️ Archived {$cls} #{$id} “{$title}”\n";
             }
+
             $old->delete();
+            echo "[Delete  {$i}/{$totalPurge}] 🗑️ Deleted  {$cls} #{$id} “{$title}”\n";
         }
         echo "🔹 Cleared all existing pages\n";
 
-        // 2) Load the JSON dump
+        // 2) Load JSON dump
         $path = Environment::getEnv('SS_RECORDS_CACHE_FILE');
         if (!$path || !file_exists($path) || !is_readable($path)) {
             echo "❗ Cannot read JSON file at {$path}\n";
@@ -41,10 +51,28 @@ class MigrateDataTask extends BuildTask
             return;
         }
 
-        // 3) Start manual ID counter
-        $nextId = 1;
+        // 3) Count total items to import
+        $total = 1; // journal itself
+        if (!empty($dump['Volumes'])) {
+            foreach ($dump['Volumes'] as $vol) {
+                $total++;
+                if (!empty($vol['Issues'])) {
+                    foreach ($vol['Issues'] as $iss) {
+                        $total++;
+                        if (!empty($iss['Articles'])) {
+                            $total += count($iss['Articles']);
+                        }
+                    }
+                }
+            }
+        }
 
-        // 4) Create Journal page with ID = 1
+        // 4) Import with manual IDs and progress
+        $nextId  = 1;
+        $current = 0;
+
+        // Journal
+        $current++;
         $journal = JournalPage::create();
         $journal->ID    = $nextId;
         $journal->Title = $dump['Title'] ?? 'Untitled Journal';
@@ -52,12 +80,14 @@ class MigrateDataTask extends BuildTask
         if ($journal->hasExtension(Versioned::class)) {
             $journal->publishSingle();
         }
-        echo "{$nextId}️⃣ Created Journal #{$journal->ID}\n";
+        echo "[{$current}/{$total}] {$nextId}️⃣ Journal #{$journal->ID} “{$journal->Title}” created\n";
         $nextId++;
 
-        // 5) Create Volume pages
-        if (!empty($dump['Volumes']) && is_array($dump['Volumes'])) {
+        // Volumes → Issues → Articles
+        if (!empty($dump['Volumes'])) {
             foreach ($dump['Volumes'] as $volData) {
+                // Volume
+                $current++;
                 $vol = VolumePage::create();
                 $vol->ID        = $nextId;
                 $vol->ParentID  = $journal->ID;
@@ -69,12 +99,13 @@ class MigrateDataTask extends BuildTask
                 if ($vol->hasExtension(Versioned::class)) {
                     $vol->publishSingle();
                 }
-                echo "{$nextId}️⃣ Created Volume #{$vol->ID}\n";
+                echo "[{$current}/{$total}] {$nextId}️⃣ Volume #{$vol->ID} “{$vol->Title}” created\n";
                 $nextId++;
 
-                // 6) Create Issue pages
-                if (!empty($volData['Issues']) && is_array($volData['Issues'])) {
+                if (!empty($volData['Issues'])) {
                     foreach ($volData['Issues'] as $issData) {
+                        // Issue
+                        $current++;
                         $iss = IssuePage::create();
                         $iss->ID         = $nextId;
                         $iss->ParentID   = $vol->ID;
@@ -89,12 +120,13 @@ class MigrateDataTask extends BuildTask
                         if ($iss->hasExtension(Versioned::class)) {
                             $iss->publishSingle();
                         }
-                        echo "{$nextId}️⃣ Created Issue #{$iss->ID}\n";
+                        echo "[{$current}/{$total}] {$nextId}️⃣ Issue #{$iss->ID} “{$iss->Title}” created\n";
                         $nextId++;
 
-                        // 7) Create Article pages
-                        if (!empty($issData['Articles']) && is_array($issData['Articles'])) {
+                        if (!empty($issData['Articles'])) {
                             foreach ($issData['Articles'] as $artData) {
+                                // Article
+                                $current++;
                                 $art = ArticlePage::create();
                                 $art->ID        = $nextId;
                                 $art->ParentID  = $iss->ID;
@@ -106,7 +138,7 @@ class MigrateDataTask extends BuildTask
                                 if ($art->hasExtension(Versioned::class)) {
                                     $art->publishSingle();
                                 }
-                                echo "{$nextId}️⃣ Created Article #{$art->ID}\n";
+                                echo "[{$current}/{$total}] {$nextId}️⃣ Article #{$art->ID} “{$art->Title}” created\n";
                                 $nextId++;
                             }
                         }
@@ -115,8 +147,8 @@ class MigrateDataTask extends BuildTask
             }
         }
 
-        // 8) Final summary
+        // 5) Final summary
         $lastId = $nextId - 1;
-        echo "🎉 All pages created with manual sequential IDs up to {$lastId}\n";
+        echo "🎉 Import complete: {$current}/{$total} items processed, IDs up to {$lastId}\n";
     }
 }
