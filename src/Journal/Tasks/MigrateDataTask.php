@@ -4,45 +4,41 @@ namespace Journal\Tasks;
 
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\Control\HTTPRequest;
-use SilverStripe\CMS\Model\SiteTree;
-use SilverStripe\ErrorPage\ErrorPage;
-use SilverStripe\Versioned\Versioned;
+use SilverStripe\Core\Environment;
 
 class MigrateDataTask extends BuildTask
 {
     protected $title = 'Migrate Data Task';
-    protected $description = 'Archives then deletes all non-error pages from the SiteTree';
+    protected $description = 'Reads and dumps the JSON data from the file defined by SS_RECORDS_CACHE_FILE';
 
     /**
      * @param HTTPRequest|null $request
      */
     public function run($request)
     {
-        // Get all pages except SilverStripe error pages
-        $pages = SiteTree::get()->exclude('ClassName', ErrorPage::class);
-        $count = $pages->count();
-
-        if ($count === 0) {
-            echo "ℹ️ No non-error pages found to archive and delete.\n";
+        // 1. Read cache file path from .env
+        $cachePath = Environment::getEnv('SS_RECORDS_CACHE_FILE');
+        if (!$cachePath) {
+            echo "❗ SS_RECORDS_CACHE_FILE is not defined in .env\n";
             return;
         }
 
-        // Archive and delete each page
-        foreach ($pages as $page) {
-            $class = $page->ClassName;
-            $id    = $page->ID;
-
-            if ($page->hasExtension(Versioned::class)) {
-                // Archive this page (all its versions)
-                $page->doArchive();
-                echo "🗄️ Archived {$class} #{$id}\n";
-            }
-
-            // Now delete the record
-            $page->delete();
-            echo "🗑️ Deleted {$class} #{$id}\n";
+        // 2. Ensure the file exists and is readable
+        if (!file_exists($cachePath) || !is_readable($cachePath)) {
+            echo "❗ Cannot read JSON file at {$cachePath}\n";
+            return;
         }
 
-        echo "✅ Archived and deleted {$count} non-error page(s) from the site tree.\n";
+        // 3. Load and decode the JSON
+        $json = file_get_contents($cachePath);
+        $data = json_decode($json, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            echo "❗ JSON decode error: " . json_last_error_msg() . "\n";
+            return;
+        }
+
+        // 4. Dump the loaded data (you can customize this to handle it differently)
+        echo "✅ Loaded JSON data from {$cachePath}:\n";
+        print_r($data);
     }
 }
