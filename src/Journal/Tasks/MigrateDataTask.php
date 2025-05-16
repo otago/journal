@@ -9,6 +9,7 @@ use Journal\Pages\Article as ArticlePage;
 use Journal\Models\Author;
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\Core\Environment;
+use SilverStripe\Core\Injector\Injector;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Versioned\Versioned;
 use SilverStripe\Assets\File as AssetFile;
@@ -18,7 +19,7 @@ use SilverStripe\Assets\Folder;
 class MigrateDataTask extends BuildTask
 {
     protected $title       = 'Migrate Data Task';
-    protected $description = 'Purges all content, then imports Journal structure with cached fields and assets, dynamically handling Author fields';
+    protected $description = 'Purges all content, then imports Journal structure with cached fields and assets, preserving original IDs';
 
     /** Keys to skip when reapplying cached data */
     private $skipFields = [
@@ -40,19 +41,25 @@ class MigrateDataTask extends BuildTask
     {
         // 0) Purge all File records
         foreach (AssetFile::get() as $file) {
-            if ($file->hasExtension(Versioned::class)) $file->doArchive();
+            if ($file->hasExtension(Versioned::class)) {
+                $file->doArchive();
+            }
             $file->delete();
         }
 
         // 1) Purge all pages
         foreach (SiteTree::get() as $page) {
-            if ($page->hasExtension(Versioned::class)) $page->doArchive();
+            if ($page->hasExtension(Versioned::class)) {
+                $page->doArchive();
+            }
             $page->delete();
         }
 
         // 2) Purge all authors
         foreach (Author::get() as $a) {
-            if ($a->hasExtension(Versioned::class)) $a->doArchive();
+            if ($a->hasExtension(Versioned::class)) {
+                $a->doArchive();
+            }
             $a->delete();
         }
 
@@ -69,7 +76,7 @@ class MigrateDataTask extends BuildTask
         }
 
         // 4) Count total items
-        $total = 1; // journal
+        $total = 1; // Journal itself
         foreach ($dump['Volumes'] ?? [] as $v) {
             $total++;
             foreach ($v['Issues'] ?? [] as $i) {
@@ -89,24 +96,31 @@ class MigrateDataTask extends BuildTask
         $current    = 0;
         $nextPageID = 1;
 
-        // Helper: import a file into the same relative asset folder
-        $importFile = function (array $meta) {
+        // Helper to import a file/image with its original ID and folder
+        $importAsset = function (array $meta, string $class) {
             if (empty($meta['LocalPath']) || !file_exists($meta['LocalPath'])) {
-                throw new \RuntimeException("Missing source file {$meta['Filename']}");
+                throw new \RuntimeException("Missing source file “{$meta['Filename']}”");
             }
-            // strip leading "/assets" from RelativeURLDir, then trim slashes
-            $raw    = $meta['RelativeURLDir'] ?? '';
-            $relDir = trim(preg_replace('#^/assets#', '', $raw), '/');
-            // ensure folder exists
-            $folder = Folder::find_or_make($relDir);
-            $dest   = ($relDir ? "{$relDir}/" : '') . $meta['Filename'];
-            $file   = AssetFile::create();
-            $file->setFromLocalFile($meta['LocalPath'], $dest);
-            $file->write();
-            if ($file->hasExtension(Versioned::class)) {
-                $file->publishSingle();
+
+            // Determine relative folder under assets (strip leading "/assets")
+            $rawDir  = $meta['RelativeURLDir'] ?? '';
+            $relDir  = trim(preg_replace('#^/assets#', '', $rawDir), '/');
+            $folder  = Folder::find_or_make($relDir);
+            $dest    = ($relDir ? "{$relDir}/" : '') . $meta['Filename'];
+
+            /** @var AssetFile|AssetImage $assetObj */
+            $assetObj = Injector::inst()->create($class);
+            $assetObj->ID = (int)$meta['ID'];
+
+            // Stream from local path into the asset store
+            $assetObj->setFromLocalFile($meta['LocalPath'], $dest);
+            $assetObj->write();
+
+            if ($assetObj->hasExtension(Versioned::class)) {
+                $assetObj->publishSingle();
             }
-            return $file;
+
+            return $assetObj;
         };
 
         // 6) Create Journal
@@ -115,11 +129,17 @@ class MigrateDataTask extends BuildTask
         $jp = JournalPage::create();
         $jp->ID = $nextPageID;
         foreach ($dump as $k => $v) {
-            if (in_array($k, $this->skipFields, true)) continue;
-            if ($jp->hasDatabaseField($k)) $jp->$k = $v;
+            if (in_array($k, $this->skipFields, true)) {
+                continue;
+            }
+            if ($jp->hasDatabaseField($k)) {
+                $jp->$k = $v;
+            }
         }
         $jp->write();
-        if ($jp->hasExtension(Versioned::class)) $jp->publishSingle();
+        if ($jp->hasExtension(Versioned::class)) {
+            $jp->publishSingle();
+        }
         echo "[{$current}/{$total}] Journal #{$nextPageID} “{$jp->Title}” created\n\n";
         $nextPageID++;
 
@@ -131,25 +151,31 @@ class MigrateDataTask extends BuildTask
             $vp->ID       = $nextPageID;
             $vp->ParentID = $jp->ID;
             foreach ($volData as $k => $v) {
-                if (in_array($k, $this->skipFields, true)) continue;
-                if ($vp->hasDatabaseField($k)) $vp->$k = $v;
+                if (in_array($k, $this->skipFields, true)) {
+                    continue;
+                }
+                if ($vp->hasDatabaseField($k)) {
+                    $vp->$k = $v;
+                }
             }
             $vp->write();
 
             // Cover
             if (!empty($volData['Cover']['LocalPath'])) {
                 echo "  Attaching Volume Cover…\n";
-                $cover = $importFile($volData['Cover']);
+                $cover = $importAsset($volData['Cover'], AssetImage::class);
                 $vp->CoverID = $cover->ID;
             }
             // Image
             if (!empty($volData['Image']['LocalPath'])) {
                 echo "  Attaching Volume Image…\n";
-                $img = $importFile($volData['Image']);
+                $img = $importAsset($volData['Image'], AssetImage::class);
                 $vp->ImageID = $img->ID;
             }
             $vp->write();
-            if ($vp->hasExtension(Versioned::class)) $vp->publishSingle();
+            if ($vp->hasExtension(Versioned::class)) {
+                $vp->publishSingle();
+            }
             echo "[{$current}/{$total}] Volume #{$nextPageID} “{$vp->Title}” created\n\n";
             $nextPageID++;
 
@@ -161,25 +187,31 @@ class MigrateDataTask extends BuildTask
                 $ip->ID       = $nextPageID;
                 $ip->ParentID = $vp->ID;
                 foreach ($issData as $k => $v) {
-                    if (in_array($k, $this->skipFields, true)) continue;
-                    if ($ip->hasDatabaseField($k)) $ip->$k = $v;
+                    if (in_array($k, $this->skipFields, true)) {
+                        continue;
+                    }
+                    if ($ip->hasDatabaseField($k)) {
+                        $ip->$k = $v;
+                    }
                 }
                 $ip->write();
 
                 // File
                 if (!empty($issData['File']['LocalPath'])) {
                     echo "  Attaching Issue File…\n";
-                    $f = $importFile($issData['File']);
+                    $f = $importAsset($issData['File'], AssetFile::class);
                     $ip->FileID = $f->ID;
                 }
                 // Cover
                 if (!empty($issData['Cover']['LocalPath'])) {
                     echo "  Attaching Issue Cover…\n";
-                    $ci = $importFile($issData['Cover']);
+                    $ci = $importAsset($issData['Cover'], AssetImage::class);
                     $ip->CoverID = $ci->ID;
                 }
                 $ip->write();
-                if ($ip->hasExtension(Versioned::class)) $ip->publishSingle();
+                if ($ip->hasExtension(Versioned::class)) {
+                    $ip->publishSingle();
+                }
                 echo "[{$current}/{$total}] Issue #{$nextPageID} “{$ip->Title}” created\n\n";
                 $nextPageID++;
 
@@ -187,7 +219,7 @@ class MigrateDataTask extends BuildTask
                 foreach ($issData['Authors'] ?? [] as $idx => $authData) {
                     $current++;
                     echo "[{$current}/{$total}] Creating Issue Author…\n";
-                    $filter = [];
+                    $filter   = [];
                     foreach ($authorFields as $f) {
                         if (isset($authData[$f]) && $authData[$f] !== '') {
                             $filter[$f] = $authData[$f];
@@ -198,7 +230,9 @@ class MigrateDataTask extends BuildTask
                         array_intersect_key($authData, array_flip($authorFields))
                     );
                     $author->write();
-                    if ($author->hasExtension(Versioned::class)) $author->publishSingle();
+                    if ($author->hasExtension(Versioned::class)) {
+                        $author->publishSingle();
+                    }
                     $ip->Authors()->add($author, ['Sort' => $idx]);
                     echo "[{$current}/{$total}] Issue Author #{$author->ID} “{$author->Name()}” added\n";
                 }
@@ -212,19 +246,25 @@ class MigrateDataTask extends BuildTask
                     $ap->ID       = $nextPageID;
                     $ap->ParentID = $ip->ID;
                     foreach ($artData as $k => $v) {
-                        if (in_array($k, $this->skipFields, true)) continue;
-                        if ($ap->hasDatabaseField($k)) $ap->$k = $v;
+                        if (in_array($k, $this->skipFields, true)) {
+                            continue;
+                        }
+                        if ($ap->hasDatabaseField($k)) {
+                            $ap->$k = $v;
+                        }
                     }
                     $ap->write();
 
                     // File
                     if (!empty($artData['File']['LocalPath'])) {
                         echo "  Attaching Article File…\n";
-                        $af = $importFile($artData['File']);
+                        $af = $importAsset($artData['File'], AssetFile::class);
                         $ap->FileID = $af->ID;
                     }
                     $ap->write();
-                    if ($ap->hasExtension(Versioned::class)) $ap->publishSingle();
+                    if ($ap->hasExtension(Versioned::class)) {
+                        $ap->publishSingle();
+                    }
                     echo "[{$current}/{$total}] Article #{$nextPageID} “{$ap->Title}” created\n\n";
                     $nextPageID++;
 
@@ -232,7 +272,7 @@ class MigrateDataTask extends BuildTask
                     foreach ($artData['Authors'] ?? [] as $idx => $authData) {
                         $current++;
                         echo "[{$current}/{$total}] Creating Article Author…\n";
-                        $filter = [];
+                        $filter   = [];
                         foreach ($authorFields as $f) {
                             if (isset($authData[$f]) && $authData[$f] !== '') {
                                 $filter[$f] = $authData[$f];
@@ -243,7 +283,9 @@ class MigrateDataTask extends BuildTask
                             array_intersect_key($authData, array_flip($authorFields))
                         );
                         $author->write();
-                        if ($author->hasExtension(Versioned::class)) $author->publishSingle();
+                        if ($author->hasExtension(Versioned::class)) {
+                            $author->publishSingle();
+                        }
                         $ap->Authors()->add($author, ['Sort' => $idx]);
                         echo "[{$current}/{$total}] Article Author #{$author->ID} “{$author->Name()}” added\n";
                     }
