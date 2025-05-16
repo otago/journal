@@ -12,22 +12,42 @@ use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Core\Environment;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Versioned\Versioned;
+use SilverStripe\Assets\File as AssetFile;
+use SilverStripe\Assets\File;
 
 class MigrateDataTask extends BuildTask
 {
     protected $title       = 'Migrate Data Task';
-    protected $description = 'Clears all content and imports Journal structure with Authors, using FirstName/Surname/ORCID';
+    protected $description = 'Purges all content, including files, then imports Journal structure with Authors and local Article files';
 
     public function run($request)
     {
+        // 0) Purge all File records
+        $files      = File::get();
+        $totalFiles = $files->count();
+        echo "➡️ Purging {$totalFiles} File records...\n";
+        foreach ($files as $i => $file) {
+            $idx  = $i + 1;
+            $name = $file->getFilename() ?: '[no filename]';
+            if ($file->hasExtension(Versioned::class)) {
+                echo "[{$idx}/{$totalFiles}] Archiving File #{$file->ID} “{$name}”…\n";
+                $file->doArchive();
+                echo "[{$idx}/{$totalFiles}] Archived\n";
+            }
+            echo "[{$idx}/{$totalFiles}] Deleting File #{$file->ID} “{$name}”…\n";
+            $file->delete();
+            echo "[{$idx}/{$totalFiles}] Deleted\n";
+        }
+        echo "✅ File records purged\n\n";
+
         // 1) Purge all pages
-        $pages = SiteTree::get();
+        $pages      = SiteTree::get();
         $totalPages = $pages->count();
         echo "➡️ Purging {$totalPages} pages...\n";
         foreach ($pages as $i => $page) {
-            $idx = $i + 1;
-            $cls = $page->ClassName;
-            $id  = $page->ID;
+            $idx   = $i + 1;
+            $cls   = $page->ClassName;
+            $id    = $page->ID;
             $title = $page->Title ?: '[no title]';
 
             if ($page->hasExtension(Versioned::class)) {
@@ -41,12 +61,12 @@ class MigrateDataTask extends BuildTask
         }
         echo "✅ Pages purged\n\n";
 
-        // 2) Purge all authors (versioned)
-        $authors = Author::get();
+        // 2) Purge all authors
+        $authors   = Author::get();
         $totalAuth = $authors->count();
         echo "➡️ Purging {$totalAuth} authors...\n";
         foreach ($authors as $i => $a) {
-            $idx = $i + 1;
+            $idx  = $i + 1;
             $name = $a->Name() ?: '[no name]';
             if ($a->hasExtension(Versioned::class)) {
                 echo "[{$idx}/{$totalAuth}] Archiving Author #{$a->ID} “{$name}”…\n";
@@ -73,7 +93,7 @@ class MigrateDataTask extends BuildTask
         echo "✅ Loaded JSON dump\n\n";
 
         // 4) Count items
-        $count = 1;
+        $count = 1; // journal
         foreach ($dump['Volumes'] ?? [] as $vol) {
             $count++;
             foreach ($vol['Issues'] ?? [] as $iss) {
@@ -88,13 +108,14 @@ class MigrateDataTask extends BuildTask
         echo "➡️ Importing {$count} items...\n";
 
         // 5) Import
-        $current = 0;
-        $nextId  = 1;
+        $current   = 0;
+        $nextId    = 1;
+        $assetsDir = rtrim(Environment::getEnv('SS_DUMP_ASSETS_DIR') ?: '', '/');
 
         // Journal
         $current++;
-        $journal = JournalPage::create();
-        $journal->ID    = $nextId;
+        $journal       = JournalPage::create();
+        $journal->ID   = $nextId;
         $journal->Title = $dump['Title'] ?? 'Untitled Journal';
         $journal->write();
         if ($journal->hasExtension(Versioned::class)) {
@@ -107,7 +128,7 @@ class MigrateDataTask extends BuildTask
         foreach ($dump['Volumes'] ?? [] as $volData) {
             // Volume
             $current++;
-            $vol = VolumePage::create();
+            $vol             = VolumePage::create();
             $vol->ID         = $nextId;
             $vol->ParentID   = $journal->ID;
             $vol->Title      = $volData['Title'] ?? 'Untitled Volume';
@@ -122,7 +143,7 @@ class MigrateDataTask extends BuildTask
             foreach ($volData['Issues'] ?? [] as $issData) {
                 // Issue
                 $current++;
-                $iss = IssuePage::create();
+                $iss             = IssuePage::create();
                 $iss->ID         = $nextId;
                 $iss->ParentID   = $vol->ID;
                 $iss->Title      = $issData['Title'] ?? 'Untitled Issue';
@@ -138,9 +159,9 @@ class MigrateDataTask extends BuildTask
                 // Issue Authors
                 foreach ($issData['Authors'] ?? [] as $idx => $authData) {
                     $current++;
-                    $fn = $authData['FirstName'] ?? '';
-                    $sn = $authData['Surname'] ?? '';
-                    $or = $authData['ORCID'] ?? '';
+                    $fn     = $authData['FirstName'] ?? '';
+                    $sn     = $authData['Surname'] ?? '';
+                    $or     = $authData['ORCID'] ?? '';
                     $filter = $or
                         ? ['ORCID' => $or]
                         : ['FirstName' => $fn, 'Surname' => $sn];
@@ -157,7 +178,7 @@ class MigrateDataTask extends BuildTask
                 // Articles
                 foreach ($issData['Articles'] ?? [] as $artData) {
                     $current++;
-                    $art = ArticlePage::create();
+                    $art             = ArticlePage::create();
                     $art->ID         = $nextId;
                     $art->ParentID   = $iss->ID;
                     $art->Title      = $artData['Title'] ?? 'Untitled Article';
@@ -167,14 +188,33 @@ class MigrateDataTask extends BuildTask
                         $art->publishSingle();
                     }
                     echo "[{$current}/{$count}] Article #{$nextId} “{$art->Title}” created\n";
+
+                    // Local file attachment
+                    if (!empty($artData['File']) && isset($artData['File']['LocalPath'])) {
+                        $srcPath = $artData['File']['LocalPath'];
+                        if (file_exists($srcPath)) {
+                            $file = AssetFile::create();
+                            $file->setFromLocalFile($srcPath, $artData['File']['Filename']);
+                            $file->write();
+                            if ($file->hasExtension(Versioned::class)) {
+                                $file->publishSingle();
+                            }
+                            $art->FileID = $file->ID;
+                            $art->write();
+                            echo "[    ]   • Attached file #{$file->ID} “{$file->Filename}” from {$srcPath}\n";
+                        } else {
+                            echo "[    ]   ⚠️ Missing file at {$srcPath}\n";
+                        }
+                    }
+
                     $nextId++;
 
                     // Article Authors
                     foreach ($artData['Authors'] ?? [] as $idx => $authData) {
                         $current++;
-                        $fn = $authData['FirstName'] ?? '';
-                        $sn = $authData['Surname'] ?? '';
-                        $or = $authData['ORCID'] ?? '';
+                        $fn     = $authData['FirstName'] ?? '';
+                        $sn     = $authData['Surname'] ?? '';
+                        $or     = $authData['ORCID'] ?? '';
                         $filter = $or
                             ? ['ORCID' => $or]
                             : ['FirstName' => $fn, 'Surname' => $sn];
