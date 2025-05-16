@@ -1,283 +1,169 @@
 <?php
 
-namespace Journal\Tasks;
+namespace OP\Journals;
 
-use Journal\Pages\Journal as JournalPage;
-use Journal\Pages\Volume as VolumePage;
-use Journal\Pages\Issue as IssuePage;
-use Journal\Pages\Article as ArticlePage;
-use Journal\Models\Author;
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\Core\Environment;
-use SilverStripe\CMS\Model\SiteTree;
-use SilverStripe\Versioned\Versioned;
 use SilverStripe\Assets\File as AssetFile;
-use SilverStripe\Assets\Image as AssetImage;
+use OP\Journals\Journal;
+use OP\Journals\Volume;
+use OP\Journals\Issue;
+use OP\Journals\Article;
 
-class MigrateDataTask extends BuildTask
+class MigrateTask extends BuildTask
 {
-    protected $title       = 'Migrate Data Task';
-    protected $description = 'Purges all content, then imports Journal structure with Authors plus assets, publishing after assets';
+    private static $segment = 'MigrateTask';
+
+    protected $title       = 'Migrate Task';
+    protected $description = 'Exports Journal #1 to JSON, caches assets locally (or via live fallback), with retry under staffhub/profilepics';
 
     public function run($request)
     {
-        // 0) Purge all File records
-        $allFiles   = AssetFile::get();
-        $totalFiles = $allFiles->count();
-        echo "➡️ Purging {$totalFiles} File records...\n";
-        foreach ($allFiles as $i => $file) {
-            $idx  = $i + 1;
-            $name = $file->getFilename() ?: '[no filename]';
-            if ($file->hasExtension(Versioned::class)) {
-                echo "[{$idx}/{$totalFiles}] Archiving File #{$file->ID} “{$name}”…\n";
-                $file->doArchive();
+        // Read env vars
+        $cachePath    = Environment::getEnv('SS_RECORDS_CACHE_FILE');
+        $assetsFolder = Environment::getEnv('SS_DUMP_ASSETS_DIR');
+        $liveDomain   = rtrim(Environment::getEnv('SS_LIVE_DOMAIN') ?: '', '/');
+        if (!$cachePath) {
+            throw new \RuntimeException("SS_RECORDS_CACHE_FILE not defined");
+        }
+        if (!$assetsFolder) {
+            throw new \RuntimeException("SS_DUMP_ASSETS_DIR not defined");
+        }
+        if (!is_dir($assetsFolder) && !mkdir($assetsFolder, 0755, true)) {
+            throw new \RuntimeException("Cannot create assets folder at {$assetsFolder}");
+        }
+
+        // Load Journal#1
+        $journal = Journal::get()->byID(1);
+        if (!$journal) {
+            throw new \RuntimeException("No Journal record found with ID=1");
+        }
+
+        // Dump Journal data
+        echo "[INFO] Dumping Journal data...\n";
+        $data = $journal->toMap();
+
+        // Asset caching helper
+        $cacheAsset = function ($record, $relation) use ($assetsFolder, $liveDomain) {
+            $idField = $relation . 'ID';
+            if (!$record->exists() || !$record->$idField) {
+                return null;
             }
-            echo "[{$idx}/{$totalFiles}] Deleting File #{$file->ID}…\n";
-            $file->delete();
-        }
-        echo "✅ File records purged\n\n";
+            $asset    = $record->$relation();
+            $relative = $asset->getFilename();
+            $basename = basename($relative);
+            $destPath = "{$assetsFolder}/{$basename}";
 
-        // 1) Purge all pages
-        $pages      = SiteTree::get();
-        $totalPages = $pages->count();
-        echo "➡️ Purging {$totalPages} pages...\n";
-        foreach ($pages as $i => $page) {
-            $idx = $i + 1;
-            if ($page->hasExtension(Versioned::class)) {
-                echo "[{$idx}/{$totalPages}] Archiving {$page->ClassName} #{$page->ID}…\n";
-                $page->doArchive();
-            }
-            echo "[{$idx}/{$totalPages}] Deleting page #{$page->ID}…\n";
-            $page->delete();
-        }
-        echo "✅ Pages purged\n\n";
-
-        // 2) Purge all authors
-        $authors   = Author::get();
-        $totalAuth = $authors->count();
-        echo "➡️ Purging {$totalAuth} authors...\n";
-        foreach ($authors as $i => $a) {
-            $idx = $i + 1;
-            if ($a->hasExtension(Versioned::class)) {
-                echo "[{$idx}/{$totalAuth}] Archiving Author #{$a->ID}…\n";
-                $a->doArchive();
-            }
-            echo "[{$idx}/{$totalAuth}] Deleting Author #{$a->ID}…\n";
-            $a->delete();
-        }
-        echo "✅ Authors purged\n\n";
-
-        // 3) Load JSON
-        $path = Environment::getEnv('SS_RECORDS_CACHE_FILE');
-        if (!$path || !is_readable($path)) {
-            echo "❌ Cannot read JSON at “{$path}”\n";
-            return;
-        }
-        $dump = json_decode(file_get_contents($path), true);
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            echo "❌ JSON decode error: " . json_last_error_msg() . "\n";
-            return;
-        }
-
-        // 4) Count items safely
-        $totalItems = 1; // journal
-        foreach ($dump['Volumes'] ?? [] as $v) {
-            $totalItems++;
-            foreach ($v['Issues'] ?? [] as $i) {
-                $totalItems++;
-                $totalItems += count($i['Authors'] ?? []);
-                foreach ($i['Articles'] ?? [] as $a) {
-                    $totalItems++;
-                    $totalItems += count($a['Authors'] ?? []);
-                }
-            }
-        }
-        echo "➡️ Importing {$totalItems} items...\n";
-
-        // 5) Import workflow
-        $current    = 0;
-        $nextPageID = 1;
-        $assetsDir  = rtrim(Environment::getEnv('SS_DUMP_ASSETS_DIR') ?: '', '/');
-
-        // Journal
-        $current++;
-        $journal        = JournalPage::create();
-        $journal->ID    = $nextPageID;
-        $journal->Title = $dump['Title'] ?? 'Untitled Journal';
-        $journal->write();
-        if ($journal->hasExtension(Versioned::class)) {
-            $journal->publishSingle();
-        }
-        echo "[{$current}/{$totalItems}] Journal created (#{$nextPageID})\n";
-        $nextPageID++;
-
-        // Volumes → Issues → Articles → Authors
-        foreach ($dump['Volumes'] ?? [] as $volData) {
-            // Volume
-            $current++;
-            $vol             = VolumePage::create();
-            $vol->ID         = $nextPageID;
-            $vol->ParentID   = $journal->ID;
-            $vol->Title      = $volData['Title'] ?? '';
-            $vol->URLSegment = $volData['URLSegment'] ?? '';
-            $vol->write();
-
-            // Cover
-            if (!empty($volData['Cover']['LocalPath'])) {
-                $src = $volData['Cover']['LocalPath'];
-                if (file_exists($src)) {
-                    $img = AssetImage::create();
-                    $img->setFromLocalFile($src, basename($src));
-                    $img->write();
-                    if ($img->hasExtension(Versioned::class)) {
-                        $img->publishSingle();
+            if (file_exists($destPath)) {
+                echo "[SKIP] {$relation} #{$asset->ID} already cached\n";
+            } else {
+                echo "[CACHE] {$relation} #{$asset->ID} -> ";
+                // try local stream
+                $in = $asset->getStream();
+                if ($in) {
+                    $out   = fopen($destPath, 'wb');
+                    $bytes = @stream_copy_to_stream($in, $out);
+                    fclose($in);
+                    fclose($out);
+                    if ($bytes !== false) {
+                        echo "local ({$bytes} bytes)\n";
+                        return ['ID' => $asset->ID, 'Filename' => $basename, 'LocalPath' => $destPath];
+                    } else {
+                        echo "local failed, ";
                     }
-                    $vol->CoverID = $img->ID;
-                    $vol->write();
+                } else {
+                    echo "no local stream, ";
                 }
-            }
-
-            // Image
-            if (!empty($volData['Image']['LocalPath'])) {
-                $src = $volData['Image']['LocalPath'];
-                if (file_exists($src)) {
-                    $img = AssetImage::create();
-                    $img->setFromLocalFile($src, basename($src));
-                    $img->write();
-                    if ($img->hasExtension(Versioned::class)) {
-                        $img->publishSingle();
+                // fallback live asset path
+                $attempts = [
+                    "/assets/{$relative}",
+                    "/assets/staffhub/profilepics/{$basename}"
+                ];
+                foreach ($attempts as $path) {
+                    if (!$liveDomain) {
+                        break;
                     }
-                    $vol->ImageID = $img->ID;
-                    $vol->write();
+                    $url    = "{$liveDomain}{$path}";
+                    echo "download from {$url} -> ";
+                    $stream = @fopen($url, 'rb');
+                    if ($stream) {
+                        $out   = fopen($destPath, 'wb');
+                        $bytes = @stream_copy_to_stream($stream, $out);
+                        fclose($stream);
+                        fclose($out);
+                        if ($bytes !== false) {
+                            echo "success ({$bytes} bytes)\n";
+                            return ['ID' => $asset->ID, 'Filename' => $basename, 'LocalPath' => $destPath];
+                        }
+                        echo "write failed, ";
+                    } else {
+                        echo "fetch failed, ";
+                    }
                 }
+                // all attempts failed
+                throw new \RuntimeException("Failed to cache {$relation} #{$asset->ID}");
             }
 
-            // Publish Volume
-            if ($vol->hasExtension(Versioned::class)) {
-                $vol->publishSingle();
-            }
-            echo "[{$current}/{$totalItems}] Volume created (#{$nextPageID})\n";
-            $nextPageID++;
+            return ['ID' => $asset->ID, 'Filename' => $basename, 'LocalPath' => $destPath];
+        };
+
+        // Process Volumes
+        echo "[INFO] Processing Volumes...\n";
+        $dumpVolumes = [];
+        $volumes     = $journal->Volumes();
+        $totalV      = $volumes->count();
+        foreach ($volumes as $i => $vol) {
+            $idx = $i + 1;
+            echo "[V{$idx}/{$totalV}] Volume “{$vol->Title}”\n";
+            $v = $vol->toMap();
+            $v['Cover'] = $cacheAsset($vol, 'Cover');
+            $v['Image'] = $cacheAsset($vol, 'Image');
 
             // Issues
-            foreach ($volData['Issues'] ?? [] as $issData) {
-                $current++;
-                $iss             = IssuePage::create();
-                $iss->ID         = $nextPageID;
-                $iss->ParentID   = $vol->ID;
-                $iss->Title      = $issData['Title'] ?? '';
-                $iss->Number     = $issData['Number'] ?? 0;
-                $iss->URLSegment = $issData['URLSegment'] ?? '';
-                $iss->write();
-
-                // File
-                if (!empty($issData['File']['LocalPath'])) {
-                    $src = $issData['File']['LocalPath'];
-                    if (file_exists($src)) {
-                        $file = AssetFile::create();
-                        $file->setFromLocalFile($src, basename($src));
-                        $file->write();
-                        if ($file->hasExtension(Versioned::class)) {
-                            $file->publishSingle();
-                        }
-                        $iss->FileID = $file->ID;
-                        $iss->write();
-                    }
-                }
-
-                // Cover
-                if (!empty($issData['Cover']['LocalPath'])) {
-                    $src = $issData['Cover']['LocalPath'];
-                    if (file_exists($src)) {
-                        $img = AssetImage::create();
-                        $img->setFromLocalFile($src, basename($src));
-                        $img->write();
-                        if ($img->hasExtension(Versioned::class)) {
-                            $img->publishSingle();
-                        }
-                        $iss->CoverID = $img->ID;
-                        $iss->write();
-                    }
-                }
-
-                // Publish Issue
-                if ($iss->hasExtension(Versioned::class)) {
-                    $iss->publishSingle();
-                }
-                echo "[{$current}/{$totalItems}] Issue created (#{$nextPageID})\n";
-                $nextPageID++;
-
-                // Issue Authors
-                foreach ($issData['Authors'] ?? [] as $idx => $authData) {
-                    $current++;
-                    $fn     = $authData['FirstName'] ?? '';
-                    $sn     = $authData['Surname']  ?? '';
-                    $or     = $authData['ORCID']    ?? '';
-                    $filter = $or
-                        ? ['ORCID' => $or]
-                        : ['FirstName' => $fn, 'Surname' => $sn];
-                    $author = Author::get()->filter($filter)->first()
-                        ?: Author::create(['FirstName' => $fn, 'Surname' => $sn, 'ORCID' => $or]);
-                    $author->write();
-                    if ($author->hasExtension(Versioned::class)) {
-                        $author->publishSingle();
-                    }
-                    $iss->Authors()->add($author, ['Sort' => $idx]);
-                }
+            $dumpIssues = [];
+            $issues      = $vol->Issues();
+            $totalI      = $issues->count();
+            foreach ($issues as $j => $iss) {
+                $jdx = $j + 1;
+                echo "  [V{$idx}.I{$jdx}/V{$totalV}.I{$totalI}] Issue “{$iss->Title}”\n";
+                $im = $iss->toMap();
+                $im['File']  = $cacheAsset($iss, 'File');
+                $im['Cover'] = $cacheAsset($iss, 'Cover');
 
                 // Articles
-                foreach ($issData['Articles'] ?? [] as $artData) {
-                    $current++;
-                    $art             = ArticlePage::create();
-                    $art->ID         = $nextPageID;
-                    $art->ParentID   = $iss->ID;
-                    $art->Title      = $artData['Title'] ?? '';
-                    $art->URLSegment = $artData['URLSegment'] ?? '';
-                    $art->write();
-
-                    // File
-                    if (!empty($artData['File']['LocalPath'])) {
-                        $src = $artData['File']['LocalPath'];
-                        if (file_exists($src)) {
-                            $file = AssetFile::create();
-                            $file->setFromLocalFile($src, $artData['File']['Filename']);
-                            $file->write();
-                            if ($file->hasExtension(Versioned::class)) {
-                                $file->publishSingle();
-                            }
-                            $art->FileID = $file->ID;
-                            $art->write();
-                        }
+                $dumpArts = [];
+                $arts      = $iss->Articles();
+                $totalA    = $arts->count();
+                foreach ($arts as $k => $art) {
+                    $kdx = $k + 1;
+                    echo "    [V{$idx}.I{$jdx}.A{$kdx}/{$totalV}.{$totalI}.{$totalA}] Article “{$art->Title}”\n";
+                    $am         = $art->toMap();
+                    $am['File'] = $cacheAsset($art, 'File');
+                    $auths      = [];
+                    foreach ($art->Authors()->sort('Sort') as $author) {
+                        $auths[] = $author->toMap();
                     }
-
-                    // Publish Article
-                    if ($art->hasExtension(Versioned::class)) {
-                        $art->publishSingle();
-                    }
-                    echo "[{$current}/{$totalItems}] Article created (#{$nextPageID})\n";
-                    $nextPageID++;
-
-                    // Article Authors
-                    foreach ($artData['Authors'] ?? [] as $idx => $authData) {
-                        $current++;
-                        $fn     = $authData['FirstName'] ?? '';
-                        $sn     = $authData['Surname']  ?? '';
-                        $or     = $authData['ORCID']    ?? '';
-                        $filter = $or
-                            ? ['ORCID' => $or]
-                            : ['FirstName' => $fn, 'Surname' => $sn];
-                        $author = Author::get()->filter($filter)->first()
-                            ?: Author::create(['FirstName' => $fn, 'Surname' => $sn, 'ORCID' => $or]);
-                        $author->write();
-                        if ($author->hasExtension(Versioned::class)) {
-                            $author->publishSingle();
-                        }
-                        $art->Authors()->add($author, ['Sort' => $idx]);
-                    }
+                    $am['Authors'] = $auths;
+                    $dumpArts[]   = $am;
                 }
+                $im['Articles'] = $dumpArts;
+                $dumpIssues[]   = $im;
             }
+            $v['Issues']   = $dumpIssues;
+            $dumpVolumes[] = $v;
         }
+        $data['Volumes'] = $dumpVolumes;
 
-        echo "🎉 Import complete: {$current}/{$totalItems} items processed\n";
+        // Write JSON
+        echo "[INFO] Writing JSON to {$cachePath}... ";
+        $fp   = fopen($cachePath, 'wb');
+        $json = json_encode($data, JSON_PRETTY_PRINT);
+        if (!$fp || $json === false || fwrite($fp, $json) === false) {
+            throw new \RuntimeException("Failed to write JSON to {$cachePath}");
+        }
+        fclose($fp);
+        echo "OK\n";
+
+        echo "[SUCCESS] Export complete. JSON: {$cachePath}, Assets: {$assetsFolder}\n";
     }
 }
