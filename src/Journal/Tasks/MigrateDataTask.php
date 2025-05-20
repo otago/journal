@@ -9,6 +9,7 @@ use Journal\Pages\Article as ArticlePage;
 use Journal\Models\Author;
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\Core\Environment;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Versioned\Versioned;
@@ -20,9 +21,9 @@ use SilverStripe\ORM\DB;
 class MigrateDataTask extends BuildTask
 {
     protected $title       = 'Migrate Data Task';
-    protected $description = 'Purges, restores backup pages (fallback to SiteTree for unknown classes), then imports Journal structure preserving IDs—including authors’ IDs';
+    protected $description = 'Purges, restores backup pages (with classname mapping), then imports Journal structure preserving IDs—including authors’ IDs';
 
-    private $skipFields = [
+    private static $skipFields = [
         'ID',
         'ClassName',
         'RecordClassName',
@@ -37,41 +38,47 @@ class MigrateDataTask extends BuildTask
         'Authors'
     ];
 
+    /**
+     * @config
+     * @var array Map of old classname => new classname
+     */
+    private static $class_map = [];
+
     public function run($request)
     {
+        // Load classname map from YAML config
+        $classMap = Config::inst()->get(self::class, 'class_map') ?: [];
+
         // 0) Purge all Files
         $files = AssetFile::get();
-        echo "➡️ Purging " . $files->count() . " files...\n";
+        echo "➡️ Purging {$files->count()} files...\n";
         foreach ($files as $i => $f) {
-            $idx = $i + 1;
             if ($f->hasExtension(Versioned::class)) {
                 $f->doArchive();
             }
-            echo "[" . $idx . "/" . $files->count() . "] Deleting File #{$f->ID}\n";
+            echo "[" . ($i + 1) . "/{$files->count()}] Deleting File #{$f->ID}\n";
             $f->delete();
         }
 
         // 1) Purge all Pages
         $pages = SiteTree::get();
-        echo "➡️ Purging " . $pages->count() . " pages...\n";
+        echo "➡️ Purging {$pages->count()} pages...\n";
         foreach ($pages as $i => $p) {
-            $idx = $i + 1;
             if ($p->hasExtension(Versioned::class)) {
                 $p->doArchive();
             }
-            echo "[" . $idx . "/" . $pages->count() . "] Deleting Page #{$p->ID}\n";
+            echo "[" . ($i + 1) . "/{$pages->count()}] Deleting Page #{$p->ID}\n";
             $p->delete();
         }
 
         // 2) Purge all Authors
         $authors = Author::get();
-        echo "➡️ Purging " . $authors->count() . " authors...\n";
+        echo "➡️ Purging {$authors->count()} authors...\n";
         foreach ($authors as $i => $a) {
-            $idx = $i + 1;
             if ($a->hasExtension(Versioned::class)) {
                 $a->doArchive();
             }
-            echo "[" . $idx . "/" . $authors->count() . "] Deleting Author #{$a->ID}\n";
+            echo "[" . ($i + 1) . "/{$authors->count()}] Deleting Author #{$a->ID}\n";
             $a->delete();
         }
 
@@ -88,20 +95,23 @@ class MigrateDataTask extends BuildTask
         }
 
         // 3a) Restore all backup pages first
-        echo "➡️ Restoring backup pages...\n";
+        echo "➡️ Restoring backup pages (with classname mapping)...\n";
         foreach ($dump['Pages'] ?? [] as $pageData) {
-            $class = $pageData['ClassName'] ?? SiteTree::class;
+            // Map original classname if configured
+            $origClass = $pageData['ClassName'] ?? SiteTree::class;
+            $class = $classMap[$origClass] ?? $origClass;
             if (!class_exists($class)) {
-                echo "  ⚠️ Unknown class {$class}, using SiteTree\n";
+                echo "  ⚠️ Unknown class {$class}, falling back to SiteTree\n";
                 $class = SiteTree::class;
             }
-            /** @var SiteTree */
+
+            /** @var SiteTree $page */
             $page = Injector::inst()->create($class);
             $page->ID = (int)($pageData['ID'] ?? 0);
 
-            // Set DB fields except relations
+            // Populate DB fields
             foreach ($pageData as $k => $v) {
-                if (in_array($k, $this->skipFields, true) || $k === 'ParentID') {
+                if (in_array($k, self::$skipFields, true) || $k === 'ParentID') {
                     continue;
                 }
                 if ($page->hasDatabaseField($k)) {
@@ -145,15 +155,11 @@ class MigrateDataTask extends BuildTask
         $maxID = (int)DB::query('SELECT MAX("ID") FROM "SiteTree"')->value();
         $nextPageID = $maxID + 1;
 
-        // Find the restored JournalPage root
-        $jp = SiteTree::get()
-            ->filter('ClassName', JournalPage::class)
-            ->first();
-
+        // Find or create JournalPage root
+        $jp = SiteTree::get()->filter('ClassName', JournalPage::class)->first();
         if ($jp) {
-            echo "➡️ Found existing JournalPage #{$jp->ID}, using it as root\n\n";
+            echo "➡️ Found JournalPage #{$jp->ID}\n\n";
         } else {
-            // Create fresh if not in backup
             echo "➡️ Creating JournalPage…\n";
             $jp = JournalPage::create();
             $jp->ID = $nextPageID++;
@@ -196,12 +202,8 @@ class MigrateDataTask extends BuildTask
             $vp->ID = $nextPageID++;
             $vp->ParentID = $jp->ID;
             foreach ($volData as $k => $v) {
-                if (in_array($k, $this->skipFields, true)) {
-                    continue;
-                }
-                if ($vp->hasDatabaseField($k)) {
-                    $vp->$k = $v;
-                }
+                if (in_array($k, self::$skipFields, true)) continue;
+                if ($vp->hasDatabaseField($k)) $vp->$k = $v;
             }
             $vp->write();
 
@@ -228,12 +230,8 @@ class MigrateDataTask extends BuildTask
                 $ip->ID = $nextPageID++;
                 $ip->ParentID = $vp->ID;
                 foreach ($issData as $k => $v) {
-                    if (in_array($k, $this->skipFields, true)) {
-                        continue;
-                    }
-                    if ($ip->hasDatabaseField($k)) {
-                        $ip->$k = $v;
-                    }
+                    if (in_array($k, self::$skipFields, true)) continue;
+                    if ($ip->hasDatabaseField($k)) $ip->$k = $v;
                 }
                 $ip->write();
 
@@ -253,14 +251,13 @@ class MigrateDataTask extends BuildTask
                 }
                 echo "  ✓ IssuePage #{$ip->ID}\n\n";
 
+                // Issue Authors
                 foreach ($issData['Authors'] ?? [] as $idx => $authData) {
                     $current++;
                     echo "[{$current}/{$total}] Issue Author…\n";
                     $filter = [];
                     foreach ($authorFields as $f) {
-                        if (!empty($authData[$f])) {
-                            $filter[$f] = $authData[$f];
-                        }
+                        if (!empty($authData[$f])) $filter[$f] = $authData[$f];
                     }
                     $existing = Author::get()->filter($filter)->first();
                     if ($existing) {
@@ -280,6 +277,7 @@ class MigrateDataTask extends BuildTask
                 }
                 echo "\n";
 
+                // Articles
                 foreach ($issData['Articles'] ?? [] as $artData) {
                     $current++;
                     echo "[{$current}/{$total}] Article…\n";
@@ -287,12 +285,8 @@ class MigrateDataTask extends BuildTask
                     $ap->ID = $nextPageID++;
                     $ap->ParentID = $ip->ID;
                     foreach ($artData as $k => $v) {
-                        if (in_array($k, $this->skipFields, true)) {
-                            continue;
-                        }
-                        if ($ap->hasDatabaseField($k)) {
-                            $ap->$k = $v;
-                        }
+                        if (in_array($k, self::$skipFields, true)) continue;
+                        if ($ap->hasDatabaseField($k)) $ap->$k = $v;
                     }
                     $ap->write();
 
@@ -307,14 +301,13 @@ class MigrateDataTask extends BuildTask
                     }
                     echo "  ✓ ArticlePage #{$ap->ID}\n\n";
 
+                    // Article Authors
                     foreach ($artData['Authors'] ?? [] as $idx => $authData) {
                         $current++;
                         echo "[{$current}/{$total}] Article Author…\n";
                         $filter = [];
                         foreach ($authorFields as $f) {
-                            if (!empty($authData[$f])) {
-                                $filter[$f] = $authData[$f];
-                            }
+                            if (!empty($authData[$f])) $filter[$f] = $authData[$f];
                         }
                         $existing = Author::get()->filter($filter)->first();
                         if ($existing) {
