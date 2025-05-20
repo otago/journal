@@ -7,22 +7,23 @@ use Journal\Pages\Volume as VolumePage;
 use Journal\Pages\Issue as IssuePage;
 use Journal\Pages\Article as ArticlePage;
 use Journal\Models\Author;
-use SilverStripe\Dev\BuildTask;
-use SilverStripe\Core\Environment;
-use SilverStripe\Core\Config\Config;
-use SilverStripe\Core\Injector\Injector;
-use SilverStripe\CMS\Model\SiteTree;
-use SilverStripe\Versioned\Versioned;
 use SilverStripe\Assets\File as AssetFile;
 use SilverStripe\Assets\Image as AssetImage;
 use SilverStripe\Assets\Folder;
-use SilverStripe\ORM\DB;
+use SilverStripe\Control\Controller;
+use SilverStripe\CMS\Model\SiteTree;
+use SilverStripe\Dev\BuildTask;
 use SilverStripe\ORM\DataObject;
+use SilverStripe\ORM\DB;
+use SilverStripe\Versioned\Versioned;
+use SilverStripe\Core\Config\Config;
+use SilverStripe\Core\Environment;
+use SilverStripe\Core\Injector\Injector;
 
 class MigrateDataTask extends BuildTask
 {
     protected $title       = 'Migrate Data Task';
-    protected $description = 'Restores backup pages (with classname mapping) then imports Journal & its Volumes/Issues/Articles, skipping existing by title';
+    protected $description = 'Purges entire SiteTree, restores backup pages (with classname mapping), then imports Journal & its Volumes/Issues/Articles, skipping existing by title';
 
     private static $skipFields = [
         'ID',
@@ -47,10 +48,18 @@ class MigrateDataTask extends BuildTask
 
     public function run($request)
     {
-        // Load classname map from YAML
-        $classMap = Config::inst()->get(self::class, 'class_map') ?: [];
+        // 1) Purge entire SiteTree
+        echo "➡️ Purging all pages...\n";
+        foreach (SiteTree::get() as $page) {
+            if ($page->hasExtension(Versioned::class)) {
+                $page->doArchive();
+            }
+            echo "  Deleting Page #{$page->ID}\n";
+            $page->delete();
+        }
+        echo "✅ All pages purged.\n\n";
 
-        // Load JSON
+        // 2) Load JSON dump
         $path = Environment::getEnv('SS_RECORDS_CACHE_FILE');
         if (!$path || !is_readable($path)) {
             echo "❌ Cannot read JSON at “{$path}”\n";
@@ -62,23 +71,21 @@ class MigrateDataTask extends BuildTask
             return;
         }
 
-        // 1) Restore backup pages
+        // 3) Restore backup pages
         echo "➡️ Restoring backup pages...\n";
+        $classMap = Config::inst()->get(self::class, 'class_map') ?: [];
         foreach ($dump['Pages'] ?? [] as $pageData) {
-            // classname mapping
-            $orig  = $pageData['ClassName'] ?? SiteTree::class;
-            $class = $classMap[$orig] ?? $orig;
+            $origClass = $pageData['ClassName'] ?? SiteTree::class;
+            $class     = $classMap[$origClass] ?? $origClass;
             if (!class_exists($class)) {
                 echo "  ⚠️ Unknown class {$class}, fallback to SiteTree\n";
                 $class = SiteTree::class;
             }
-
             $id = (int)($pageData['ID'] ?? 0);
             if (DataObject::get_by_id($class, $id)) {
                 echo "  ↳ Skipped existing {$class} #{$id}\n";
                 continue;
             }
-
             /** @var SiteTree $page */
             $page = Injector::inst()->create($class);
             $page->ID = $id;
@@ -90,9 +97,8 @@ class MigrateDataTask extends BuildTask
                     $page->$k = $v;
                 }
             }
-            $page->ParentID = isset($pageData['ParentID']) ? (int)$pageData['ParentID'] : 0;
+            $page->ParentID = (int)($pageData['ParentID'] ?? 0);
             $page->write();
-
             if ($page->hasExtension(Versioned::class)) {
                 if (!empty($pageData['isPublished'])) {
                     $page->publishSingle();
@@ -100,18 +106,20 @@ class MigrateDataTask extends BuildTask
                     $page->doUnpublish();
                 }
             }
-
             echo "  ✓ Restored {$class} #{$id}\n";
         }
         echo "✅ Pages restored.\n\n";
 
-        // 2) Import Journal structure
+        // --- New extension hook BEFORE journal import ---
+        $this->extend('onBeforeImportJournal', $dump);
+
+        // 4) Import Journal structure
         $jp = SiteTree::get()->filter('ClassName', JournalPage::class)->first();
         if ($jp) {
             echo "➡️ Found JournalPage #{$jp->ID}\n\n";
         } else {
             echo "➡️ Creating JournalPage…\n";
-            $jp             = JournalPage::create();
+            $jp = JournalPage::create();
             $jp->Title      = 'Journal';
             $jp->URLSegment = 'journal';
             $jp->write();
@@ -141,7 +149,7 @@ class MigrateDataTask extends BuildTask
             }
             $rel  = trim(preg_replace('#^/assets#', '', ($meta['RelativeURLDir'] ?? '')), '/');
             Folder::find_or_make($rel);
-            $dest = ($rel ? "$rel/" : '') . $meta['Filename'];
+            $dest = ($rel ? "{$rel}/" : '') . $meta['Filename'];
             /** @var Versioned|AssetImage|AssetFile $obj */
             $obj  = Injector::inst()->create($class);
             $obj->ID = (int)$meta['ID'];
@@ -230,9 +238,7 @@ class MigrateDataTask extends BuildTask
                     }
                     $author = Author::get()->filter($filter)->first();
                     if (!$author) {
-                        $author = Author::create(
-                            array_intersect_key($authData, array_flip($authorFields))
-                        );
+                        $author = Author::create(array_intersect_key($authData, array_flip($authorFields)));
                         $author->write();
                         $author->publishSingle();
                     }
@@ -281,9 +287,7 @@ class MigrateDataTask extends BuildTask
                         }
                         $author = Author::get()->filter($filter)->first();
                         if (!$author) {
-                            $author = Author::create(
-                                array_intersect_key($authData, array_flip($authorFields))
-                            );
+                            $author = Author::create(array_intersect_key($authData, array_flip($authorFields)));
                             $author->write();
                             $author->publishSingle();
                         }
@@ -297,12 +301,7 @@ class MigrateDataTask extends BuildTask
 
         echo "🎉 Import complete: {$current}/{$total} items processed\n";
 
-        // --- extension hook for post-import ---
-        $this->extend('onAfterImport', $dump, $jp, [
-            'pages'    => count($dump['Pages'] ?? []),
-            'volumes'  => count($dump['Volumes'] ?? []),
-            'processed' => $current,
-            'skipped'  => $total - $current
-        ]);
+        // 5) Extension hook AFTER journal import
+        $this->extend('onAfterImport', $dump, $jp);
     }
 }
