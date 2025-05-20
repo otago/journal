@@ -66,7 +66,7 @@ class MigrateDataTask extends BuildTask
         echo "➡️ Restoring backup pages...\n";
         foreach ($dump['Pages'] ?? [] as $pageData) {
             // classname mapping
-            $orig = $pageData['ClassName'] ?? SiteTree::class;
+            $orig  = $pageData['ClassName'] ?? SiteTree::class;
             $class = $classMap[$orig] ?? $orig;
             if (!class_exists($class)) {
                 echo "  ⚠️ Unknown class {$class}, fallback to SiteTree\n";
@@ -111,8 +111,8 @@ class MigrateDataTask extends BuildTask
             echo "➡️ Found JournalPage #{$jp->ID}\n\n";
         } else {
             echo "➡️ Creating JournalPage…\n";
-            $jp            = JournalPage::create();
-            $jp->Title     = 'Journal';
+            $jp             = JournalPage::create();
+            $jp->Title      = 'Journal';
             $jp->URLSegment = 'journal';
             $jp->write();
             $jp->publishSingle();
@@ -120,8 +120,8 @@ class MigrateDataTask extends BuildTask
         }
 
         $authorFields = array_keys(Author::config()->get('db') ?: []);
-        $current = 0;
-        $total   = 1;
+        $current      = 0;
+        $total        = 1;
         foreach ($dump['Volumes'] ?? [] as $v) {
             $total++;
             foreach ($v['Issues'] ?? [] as $i) {
@@ -139,9 +139,10 @@ class MigrateDataTask extends BuildTask
             if (empty($meta['LocalPath']) || !file_exists($meta['LocalPath'])) {
                 throw new \RuntimeException("Missing asset “{$meta['Filename']}”");
             }
-            $rel = trim(preg_replace('#^/assets#', '', ($meta['RelativeURLDir'] ?? '')), '/');
+            $rel  = trim(preg_replace('#^/assets#', '', ($meta['RelativeURLDir'] ?? '')), '/');
             Folder::find_or_make($rel);
             $dest = ($rel ? "$rel/" : '') . $meta['Filename'];
+            /** @var Versioned|AssetImage|AssetFile $obj */
             $obj  = Injector::inst()->create($class);
             $obj->ID = (int)$meta['ID'];
             $obj->setFromLocalFile($meta['LocalPath'], $dest);
@@ -160,8 +161,12 @@ class MigrateDataTask extends BuildTask
             $vp = VolumePage::create();
             $vp->Title = $volData['Title'];
             foreach ($volData as $k => $v) {
-                if (in_array($k, self::$skipFields, true)) continue;
-                if ($vp->hasDatabaseField($k)) $vp->$k = $v;
+                if (in_array($k, self::$skipFields, true)) {
+                    continue;
+                }
+                if ($vp->hasDatabaseField($k)) {
+                    $vp->$k = $v;
+                }
             }
             $vp->ParentID = $jp->ID;
             $vp->write();
@@ -190,8 +195,12 @@ class MigrateDataTask extends BuildTask
                 $ip = IssuePage::create();
                 $ip->Title = $issData['Title'];
                 foreach ($issData as $k => $v) {
-                    if (in_array($k, self::$skipFields, true)) continue;
-                    if ($ip->hasDatabaseField($k)) $ip->$k = $v;
+                    if (in_array($k, self::$skipFields, true)) {
+                        continue;
+                    }
+                    if ($ip->hasDatabaseField($k)) {
+                        $ip->$k = $v;
+                    }
                 }
                 $ip->ParentID = $vp->ID;
                 $ip->write();
@@ -215,11 +224,15 @@ class MigrateDataTask extends BuildTask
                     echo "[{$current}/{$total}] Issue Author…\n";
                     $filter = [];
                     foreach ($authorFields as $f) {
-                        if (!empty($authData[$f])) $filter[$f] = $authData[$f];
+                        if (!empty($authData[$f])) {
+                            $filter[$f] = $authData[$f];
+                        }
                     }
                     $author = Author::get()->filter($filter)->first();
                     if (!$author) {
-                        $author = Author::create(array_intersect_key($authData, array_flip($authorFields)));
+                        $author = Author::create(
+                            array_intersect_key($authData, array_flip($authorFields))
+                        );
                         $author->write();
                         $author->publishSingle();
                     }
@@ -238,8 +251,12 @@ class MigrateDataTask extends BuildTask
                     $ap = ArticlePage::create();
                     $ap->Title = $artData['Title'];
                     foreach ($artData as $k => $v) {
-                        if (in_array($k, self::$skipFields, true)) continue;
-                        if ($ap->hasDatabaseField($k)) $ap->$k = $v;
+                        if (in_array($k, self::$skipFields, true)) {
+                            continue;
+                        }
+                        if ($ap->hasDatabaseField($k)) {
+                            $ap->$k = $v;
+                        }
                     }
                     $ap->ParentID = $ip->ID;
                     $ap->write();
@@ -258,11 +275,15 @@ class MigrateDataTask extends BuildTask
                         echo "[{$current}/{$total}] Article Author…\n";
                         $filter = [];
                         foreach ($authorFields as $f) {
-                            if (!empty($authData[$f])) $filter[$f] = $authData[$f];
+                            if (!empty($authData[$f])) {
+                                $filter[$f] = $authData[$f];
+                            }
                         }
                         $author = Author::get()->filter($filter)->first();
                         if (!$author) {
-                            $author = Author::create(array_intersect_key($authData, array_flip($authorFields)));
+                            $author = Author::create(
+                                array_intersect_key($authData, array_flip($authorFields))
+                            );
                             $author->write();
                             $author->publishSingle();
                         }
@@ -275,5 +296,13 @@ class MigrateDataTask extends BuildTask
         }
 
         echo "🎉 Import complete: {$current}/{$total} items processed\n";
+
+        // --- extension hook for post-import ---
+        $this->extend('onAfterImport', $dump, $jp, [
+            'pages'    => count($dump['Pages'] ?? []),
+            'volumes'  => count($dump['Volumes'] ?? []),
+            'processed' => $current,
+            'skipped'  => $total - $current
+        ]);
     }
 }
