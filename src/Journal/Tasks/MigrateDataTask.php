@@ -95,9 +95,10 @@ class MigrateDataTask extends BuildTask
                 echo "  ⚠️ Unknown class {$class}, using SiteTree\n";
                 $class = SiteTree::class;
             }
-            /** @var SiteTree $page */
+            /** @var SiteTree */
             $page = Injector::inst()->create($class);
             $page->ID = (int)($pageData['ID'] ?? 0);
+
             // Set DB fields except relations
             foreach ($pageData as $k => $v) {
                 if (in_array($k, $this->skipFields, true) || $k === 'ParentID') {
@@ -107,12 +108,20 @@ class MigrateDataTask extends BuildTask
                     $page->$k = $v;
                 }
             }
+
             // Restore hierarchy
             $page->ParentID = isset($pageData['ParentID']) ? (int)$pageData['ParentID'] : 0;
             $page->write();
+
+            // Publish or unpublish based on backup flag
             if ($page->hasExtension(Versioned::class)) {
-                $page->publishSingle();
+                if (!empty($pageData['isPublished'])) {
+                    $page->publishSingle();
+                } else {
+                    $page->doUnpublish();
+                }
             }
+
             echo "  ✓ Restored {$class} #{$page->ID}\n";
         }
         echo "✅ Backup pages restored.\n\n";
@@ -187,8 +196,12 @@ class MigrateDataTask extends BuildTask
             $vp->ID = $nextPageID++;
             $vp->ParentID = $jp->ID;
             foreach ($volData as $k => $v) {
-                if (in_array($k, $this->skipFields, true)) continue;
-                if ($vp->hasDatabaseField($k)) $vp->$k = $v;
+                if (in_array($k, $this->skipFields, true)) {
+                    continue;
+                }
+                if ($vp->hasDatabaseField($k)) {
+                    $vp->$k = $v;
+                }
             }
             $vp->write();
 
@@ -203,7 +216,9 @@ class MigrateDataTask extends BuildTask
                 $vp->ImageID = $i->ID;
             }
             $vp->write();
-            if ($vp->hasExtension(Versioned::class)) $vp->publishSingle();
+            if ($vp->hasExtension(Versioned::class)) {
+                $vp->publishSingle();
+            }
             echo "  ✓ VolumePage #{$vp->ID}\n\n";
 
             foreach ($volData['Issues'] ?? [] as $issData) {
@@ -213,8 +228,12 @@ class MigrateDataTask extends BuildTask
                 $ip->ID = $nextPageID++;
                 $ip->ParentID = $vp->ID;
                 foreach ($issData as $k => $v) {
-                    if (in_array($k, $this->skipFields, true)) continue;
-                    if ($ip->hasDatabaseField($k)) $ip->$k = $v;
+                    if (in_array($k, $this->skipFields, true)) {
+                        continue;
+                    }
+                    if ($ip->hasDatabaseField($k)) {
+                        $ip->$k = $v;
+                    }
                 }
                 $ip->write();
 
@@ -229,7 +248,9 @@ class MigrateDataTask extends BuildTask
                     $ip->CoverID = $ci->ID;
                 }
                 $ip->write();
-                if ($ip->hasExtension(Versioned::class)) $ip->publishSingle();
+                if ($ip->hasExtension(Versioned::class)) {
+                    $ip->publishSingle();
+                }
                 echo "  ✓ IssuePage #{$ip->ID}\n\n";
 
                 foreach ($issData['Authors'] ?? [] as $idx => $authData) {
@@ -237,16 +258,22 @@ class MigrateDataTask extends BuildTask
                     echo "[{$current}/{$total}] Issue Author…\n";
                     $filter = [];
                     foreach ($authorFields as $f) {
-                        if (!empty($authData[$f])) $filter[$f] = $authData[$f];
+                        if (!empty($authData[$f])) {
+                            $filter[$f] = $authData[$f];
+                        }
                     }
                     $existing = Author::get()->filter($filter)->first();
                     if ($existing) {
                         $author = $existing;
                     } else {
-                        $author = Author::create(array_intersect_key($authData, array_flip($authorFields)));
+                        $author = Author::create(
+                            array_intersect_key($authData, array_flip($authorFields))
+                        );
                         $author->ID = (int)$authData['ID'];
                         $author->write();
-                        if ($author->hasExtension(Versioned::class)) $author->publishSingle();
+                        if ($author->hasExtension(Versioned::class)) {
+                            $author->publishSingle();
+                        }
                     }
                     $ip->Authors()->add($author, ['Sort' => $idx]);
                     echo "  • Author #{$author->ID}\n";
@@ -260,8 +287,12 @@ class MigrateDataTask extends BuildTask
                     $ap->ID = $nextPageID++;
                     $ap->ParentID = $ip->ID;
                     foreach ($artData as $k => $v) {
-                        if (in_array($k, $this->skipFields, true)) continue;
-                        if ($ap->hasDatabaseField($k)) $ap->$k = $v;
+                        if (in_array($k, $this->skipFields, true)) {
+                            continue;
+                        }
+                        if ($ap->hasDatabaseField($k)) {
+                            $ap->$k = $v;
+                        }
                     }
                     $ap->write();
 
@@ -271,7 +302,9 @@ class MigrateDataTask extends BuildTask
                         $ap->FileID = $f->ID;
                     }
                     $ap->write();
-                    if ($ap->hasExtension(Versioned::class)) $ap->publishSingle();
+                    if ($ap->hasExtension(Versioned::class)) {
+                        $ap->publishSingle();
+                    }
                     echo "  ✓ ArticlePage #{$ap->ID}\n\n";
 
                     foreach ($artData['Authors'] ?? [] as $idx => $authData) {
@@ -279,16 +312,22 @@ class MigrateDataTask extends BuildTask
                         echo "[{$current}/{$total}] Article Author…\n";
                         $filter = [];
                         foreach ($authorFields as $f) {
-                            if (!empty($authData[$f])) $filter[$f] = $authData[$f];
+                            if (!empty($authData[$f])) {
+                                $filter[$f] = $authData[$f];
+                            }
                         }
                         $existing = Author::get()->filter($filter)->first();
                         if ($existing) {
                             $author = $existing;
                         } else {
-                            $author = Author::create(array_intersect_key($authData, array_flip($authorFields)));
+                            $author = Author::create(
+                                array_intersect_key($authData, array_flip($authorFields))
+                            );
                             $author->ID = (int)$authData['ID'];
                             $author->write();
-                            if ($author->hasExtension(Versioned::class)) $author->publishSingle();
+                            if ($author->hasExtension(Versioned::class)) {
+                                $author->publishSingle();
+                            }
                         }
                         $ap->Authors()->add($author, ['Sort' => $idx]);
                         echo "  • Author #{$author->ID}\n";
