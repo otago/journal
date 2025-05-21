@@ -19,11 +19,13 @@ use SilverStripe\Versioned\Versioned;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Environment;
 use SilverStripe\Core\Injector\Injector;
+use SilverStripe\Subsites\Model\Subsite;
+use SilverStripe\SiteConfig\SiteConfig;
 
 class MigrateDataTask extends BuildTask
 {
     protected $title       = 'Migrate Data Task';
-    protected $description = 'Purges entire SiteTree, restores backup pages (with classname mapping), then imports Journal & its Volumes/Issues/Articles, skipping existing by title';
+    protected $description = 'Purges entire SiteTree, restores backup pages (with classname mapping), imports SiteConfig, then imports Journal & its Volumes/Issues/Articles, skipping existing by title';
 
     private static $skipFields = [
         'ID',
@@ -40,15 +42,10 @@ class MigrateDataTask extends BuildTask
         'Authors'
     ];
 
-    /**
-     * @config
-     * @var array Map of old classname => new classname
-     */
     private static $class_map = [];
 
     public function run($request)
     {
-        // 1) Purge entire SiteTree
         echo "➡️ Purging all pages...\n";
         foreach (SiteTree::get() as $page) {
             if ($page->hasExtension(Versioned::class)) {
@@ -59,7 +56,6 @@ class MigrateDataTask extends BuildTask
         }
         echo "✅ All pages purged.\n\n";
 
-        // 2) Load JSON dump
         $path = Environment::getEnv('SS_RECORDS_CACHE_FILE');
         if (!$path || !is_readable($path)) {
             echo "❌ Cannot read JSON at “{$path}”\n";
@@ -71,7 +67,6 @@ class MigrateDataTask extends BuildTask
             return;
         }
 
-        // 3) Restore backup pages
         echo "➡️ Restoring backup pages...\n";
         $classMap = Config::inst()->get(self::class, 'class_map') ?: [];
         foreach ($dump['Pages'] ?? [] as $pageData) {
@@ -86,7 +81,6 @@ class MigrateDataTask extends BuildTask
                 echo "  ↳ Skipped existing {$class} #{$id}\n";
                 continue;
             }
-            /** @var SiteTree $page */
             $page = Injector::inst()->create($class);
             $page->ID = $id;
             foreach ($pageData as $k => $v) {
@@ -110,26 +104,38 @@ class MigrateDataTask extends BuildTask
         }
         echo "✅ Pages restored.\n\n";
 
-        // --- New extension hook BEFORE journal import ---
-        $this->extend('onBeforeImportJournal', $dump);
-
-        // 4) Import Journal structure
-        $jp = SiteTree::get()->filter('ClassName', JournalPage::class)->first();
-        if ($jp) {
-            echo "➡️ Found JournalPage #{$jp->ID}\n\n";
+        echo "➡️ Importing SiteConfig…\n";
+        $subsiteId = Environment::getEnv('SS_SUBSITE_ID');
+        Subsite::changeSubsite((int)$subsiteId);
+        $siteConfigData = $dump['SiteConfig'] ?? [];
+        if ($siteConfigData) {
+            $sc = SiteConfig::current_site_config();
+            foreach ($siteConfigData as $k => $v) {
+                if ($sc->hasDatabaseField($k)) {
+                    $sc->$k = $v;
+                }
+            }
+            $sc->write();
+            echo "  ✓ SiteConfig updated for Subsite #{$subsiteId}\n\n";
         } else {
-            echo "➡️ Creating JournalPage…\n";
+            echo "  ⚠️ No SiteConfig data in dump\n\n";
+        }
+        Subsite::changeSubsite(null);
+
+        echo "➡️ Restoring JournalPage…\n";
+        $jp = SiteTree::get()->filter('ClassName', JournalPage::class)->first();
+        if (!$jp) {
             $jp = JournalPage::create();
             $jp->Title      = 'Journal';
             $jp->URLSegment = 'journal';
             $jp->write();
             $jp->publishSingle();
-            echo "  ✓ JournalPage #{$jp->ID}\n\n";
         }
+        echo "  ✓ JournalPage #{$jp->ID}\n\n";
 
         $authorFields = array_keys(Author::config()->get('db') ?: []);
-        $current      = 0;
-        $total        = 1;
+        $current = 0;
+        $total   = 1;
         foreach ($dump['Volumes'] ?? [] as $v) {
             $total++;
             foreach ($v['Issues'] ?? [] as $i) {
@@ -150,7 +156,6 @@ class MigrateDataTask extends BuildTask
             $rel  = trim(preg_replace('#^/assets#', '', ($meta['RelativeURLDir'] ?? '')), '/');
             Folder::find_or_make($rel);
             $dest = ($rel ? "{$rel}/" : '') . $meta['Filename'];
-            /** @var Versioned|AssetImage|AssetFile $obj */
             $obj  = Injector::inst()->create($class);
             $obj->ID = (int)$meta['ID'];
             $obj->setFromLocalFile($meta['LocalPath'], $dest);
@@ -178,14 +183,11 @@ class MigrateDataTask extends BuildTask
             }
             $vp->ParentID = $jp->ID;
             $vp->write();
-
-            if (!empty($volData['Cover']['LocalPath'] ?? '')) {
-                echo "  • Cover\n";
+            if (!empty($volData['Cover']['LocalPath'])) {
                 $c = $importAsset($volData['Cover'], AssetImage::class);
                 $vp->CoverID = $c->ID;
             }
-            if (!empty($volData['Image']['LocalPath'] ?? '')) {
-                echo "  • Image\n";
+            if (!empty($volData['Image']['LocalPath'])) {
                 $i = $importAsset($volData['Image'], AssetImage::class);
                 $vp->ImageID = $i->ID;
             }
@@ -212,14 +214,11 @@ class MigrateDataTask extends BuildTask
                 }
                 $ip->ParentID = $vp->ID;
                 $ip->write();
-
-                if (!empty($issData['File']['LocalPath'] ?? '')) {
-                    echo "  • File\n";
+                if (!empty($issData['File']['LocalPath'])) {
                     $f = $importAsset($issData['File'], AssetFile::class);
                     $ip->FileID = $f->ID;
                 }
-                if (!empty($issData['Cover']['LocalPath'] ?? '')) {
-                    echo "  • Cover\n";
+                if (!empty($issData['Cover']['LocalPath'])) {
                     $ci = $importAsset($issData['Cover'], AssetImage::class);
                     $ip->CoverID = $ci->ID;
                 }
@@ -266,9 +265,7 @@ class MigrateDataTask extends BuildTask
                     }
                     $ap->ParentID = $ip->ID;
                     $ap->write();
-
-                    if (!empty($artData['File']['LocalPath'] ?? '')) {
-                        echo "  • File\n";
+                    if (!empty($artData['File']['LocalPath'])) {
                         $f = $importAsset($artData['File'], AssetFile::class);
                         $ap->FileID = $f->ID;
                     }
@@ -301,7 +298,6 @@ class MigrateDataTask extends BuildTask
 
         echo "🎉 Import complete: {$current}/{$total} items processed\n";
 
-        // 5) Extension hook AFTER journal import
         $this->extend('onAfterImport', $dump, $jp);
     }
 }
