@@ -10,22 +10,19 @@ use Journal\Models\Author;
 use SilverStripe\Assets\File as AssetFile;
 use SilverStripe\Assets\Image as AssetImage;
 use SilverStripe\Assets\Folder;
-use SilverStripe\Control\Controller;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\ORM\DataObject;
-use SilverStripe\ORM\DB;
 use SilverStripe\Versioned\Versioned;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Environment;
 use SilverStripe\Core\Injector\Injector;
-use SilverStripe\Subsites\Model\Subsite;
 use SilverStripe\SiteConfig\SiteConfig;
 
 class MigrateDataTask extends BuildTask
 {
     protected $title       = 'Migrate Data Task';
-    protected $description = 'Purges entire SiteTree, restores backup pages (with classname mapping), imports SiteConfig, then imports Journal & its Volumes/Issues/Articles, skipping existing by title';
+    protected $description = 'Purges entire SiteTree, restores backup pages (with classname mapping), imports SiteConfig from dump, then imports Journal & its Volumes/Issues/Articles';
 
     private static $skipFields = [
         'ID',
@@ -46,6 +43,7 @@ class MigrateDataTask extends BuildTask
 
     public function run($request)
     {
+        // 1) Purge pages
         echo "➡️ Purging all pages...\n";
         foreach (SiteTree::get() as $page) {
             if ($page->hasExtension(Versioned::class)) {
@@ -56,6 +54,7 @@ class MigrateDataTask extends BuildTask
         }
         echo "✅ All pages purged.\n\n";
 
+        // 2) Load JSON dump
         $path = Environment::getEnv('SS_RECORDS_CACHE_FILE');
         if (!$path || !is_readable($path)) {
             echo "❌ Cannot read JSON at “{$path}”\n";
@@ -67,6 +66,7 @@ class MigrateDataTask extends BuildTask
             return;
         }
 
+        // 3) Restore backup pages
         echo "➡️ Restoring backup pages...\n";
         $classMap = Config::inst()->get(self::class, 'class_map') ?: [];
         foreach ($dump['Pages'] ?? [] as $pageData) {
@@ -104,11 +104,10 @@ class MigrateDataTask extends BuildTask
         }
         echo "✅ Pages restored.\n\n";
 
-        echo "➡️ Importing SiteConfig…\n";
-        $subsiteId = Environment::getEnv('SS_SUBSITE_ID');
-        Subsite::changeSubsite((int)$subsiteId);
+        // 4) Import SiteConfig
+        echo "➡️ Importing SiteConfig...\n";
         $siteConfigData = $dump['SiteConfig'] ?? [];
-        if ($siteConfigData) {
+        if (is_array($siteConfigData) && !empty($siteConfigData)) {
             $sc = SiteConfig::current_site_config();
             foreach ($siteConfigData as $k => $v) {
                 if ($sc->hasDatabaseField($k)) {
@@ -116,26 +115,31 @@ class MigrateDataTask extends BuildTask
                 }
             }
             $sc->write();
-            echo "  ✓ SiteConfig updated for Subsite #{$subsiteId}\n\n";
+            echo "  ✓ SiteConfig updated\n\n";
         } else {
             echo "  ⚠️ No SiteConfig data in dump\n\n";
         }
-        Subsite::changeSubsite(null);
 
-        echo "➡️ Restoring JournalPage…\n";
+        // 5) Extension hook BEFORE journal import
+        $this->extend('onBeforeImportJournal', $dump);
+
+        // 6) Import Journal structure
         $jp = SiteTree::get()->filter('ClassName', JournalPage::class)->first();
-        if (!$jp) {
+        if ($jp) {
+            echo "➡️ Found JournalPage #{$jp->ID}\n\n";
+        } else {
+            echo "➡️ Creating JournalPage…\n";
             $jp = JournalPage::create();
             $jp->Title      = 'Journal';
             $jp->URLSegment = 'journal';
             $jp->write();
             $jp->publishSingle();
+            echo "  ✓ JournalPage #{$jp->ID}\n\n";
         }
-        echo "  ✓ JournalPage #{$jp->ID}\n\n";
 
         $authorFields = array_keys(Author::config()->get('db') ?: []);
-        $current = 0;
-        $total   = 1;
+        $current      = 0;
+        $total        = 1;
         foreach ($dump['Volumes'] ?? [] as $v) {
             $total++;
             foreach ($v['Issues'] ?? [] as $i) {
@@ -298,6 +302,7 @@ class MigrateDataTask extends BuildTask
 
         echo "🎉 Import complete: {$current}/{$total} items processed\n";
 
+        // 7) Extension hook AFTER journal import
         $this->extend('onAfterImport', $dump, $jp);
     }
 }
